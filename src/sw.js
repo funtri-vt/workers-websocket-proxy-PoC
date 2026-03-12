@@ -1,3 +1,6 @@
+// A simple in-memory cookie jar (Note: resets if the SW goes to sleep)
+const cookieJar = {};
+
 self.addEventListener('install', event => {
   self.skipWaiting();
 });
@@ -71,7 +74,7 @@ async function handleProxyRequest(request, url) {
     // Return an empty, successful response immediately
     return new Response(null, { status: 204 }); 
   }
-  
+
   return new Promise((resolve) => {
     try {
       const wsUrl = new URL('/ws/', location.origin);
@@ -113,6 +116,14 @@ async function handleProxyRequest(request, url) {
         const headers = {};
         request.headers.forEach((value, key) => headers[key] = value);
         
+        // NEW: Look up cookies for the domain we are about to fetch
+        const requestDomain = new URL(targetUrl).hostname;
+        if (cookieJar[requestDomain] && cookieJar[requestDomain].length > 0) {
+            // Join them with a semicolon as per the HTTP spec
+            headers['Cookie'] = cookieJar[requestDomain].join('; ');
+            remoteLog(`[SW] Attached cookies for ${requestDomain}`);
+        }
+
         // NEW: Read the request body if it's a POST/PUT/PATCH
         let encodedBody = null;
         if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
@@ -152,6 +163,22 @@ async function handleProxyRequest(request, url) {
             for (const [key, value] of Object.entries(msg.headers)) {
               responseHeaders.set(key, value);
             }
+
+            // NEW: Save the intercepted cookies for this domain
+            if (msg.setCookies && msg.setCookies.length > 0) {
+               if (!cookieJar[msg.targetDomain]) {
+                   cookieJar[msg.targetDomain] = [];
+               }
+               // In a real app, you'd parse the cookie string to handle expires/path/overwrites
+               // For now, we just push the raw string
+               msg.setCookies.forEach(cookieStr => {
+                   cookieJar[msg.targetDomain].push(cookieStr.split(';')[0]); // Keep just the Key=Value part
+               });
+               remoteLog(`[SW] Saved ${msg.setCookies.length} cookies for ${msg.targetDomain}`);
+            }
+
+            headersResolved = true;
+
             headersResolved = true;
             resolve(new Response(stream, {
               status: responseStatus,

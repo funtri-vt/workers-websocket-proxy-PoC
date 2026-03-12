@@ -83,18 +83,28 @@ export default {
 
 								const headersOut = {};
 								let contentType = "";
+								
+								// NEW: Extract all Set-Cookie headers natively
+								// getSetCookie() prevents multiple cookies from being merged into one string
+								const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+
 								res.headers.forEach((value, key) => {
 									const lowerKey = key.toLowerCase();
 									if (lowerKey === "content-type") contentType = value;
-									if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy"].includes(lowerKey)) {
+									
+									// NEW: Also strip set-cookie so the browser doesn't see the original
+									if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
 								});
 
+								// NEW: Include our intercepted cookies in the payload
 								safeSend(JSON.stringify({
 									type: "response",
 									status: res.status,
-									headers: headersOut
+									headers: headersOut,
+									setCookies: setCookies, 
+									targetDomain: new URL(msg.url).hostname
 								}));
 
 								// NEW: Prepare the response for streaming
