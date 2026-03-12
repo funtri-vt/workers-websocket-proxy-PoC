@@ -1,5 +1,42 @@
-// A simple in-memory cookie jar (Note: resets if the SW goes to sleep)
-const cookieJar = {};
+// --------------------------------------------------------
+// Persistent Cookie Storage (IndexedDB)
+// --------------------------------------------------------
+const dbPromise = new Promise((resolve, reject) => {
+  const request = indexedDB.open('ProxyStorage', 1);
+  request.onupgradeneeded = (e) => {
+    e.target.result.createObjectStore('cookies');
+  };
+  request.onsuccess = (e) => resolve(e.target.result);
+  request.onerror = () => reject('IDB Error');
+});
+
+async function saveCookies(domain, newCookies) {
+  try {
+    const db = await dbPromise;
+    const tx = db.transaction('cookies', 'readwrite');
+    const store = tx.objectStore('cookies');
+    
+    // Get existing cookies
+    const existingReq = store.get(domain);
+    existingReq.onsuccess = () => {
+      let current = existingReq.result || [];
+      // Simple merge: just add the new ones (in a real app, you'd match and overwrite keys)
+      const merged = [...current, ...newCookies.map(c => c.split(';')[0])];
+      store.put([...new Set(merged)], domain);
+    };
+  } catch (e) { remoteLog(`[SW] IDB Save Error: ${e}`); }
+}
+
+async function getCookies(domain) {
+  try {
+    const db = await dbPromise;
+    return new Promise((resolve) => {
+      const tx = db.transaction('cookies', 'readonly');
+      const req = tx.objectStore('cookies').get(domain);
+      req.onsuccess = () => resolve(req.result || []);
+    });
+  } catch (e) { return []; }
+}
 
 self.addEventListener('install', event => {
   self.skipWaiting();
@@ -116,12 +153,11 @@ async function handleProxyRequest(request, url) {
         const headers = {};
         request.headers.forEach((value, key) => headers[key] = value);
         
-        // NEW: Look up cookies for the domain we are about to fetch
         const requestDomain = new URL(targetUrl).hostname;
-        if (cookieJar[requestDomain] && cookieJar[requestDomain].length > 0) {
-            // Join them with a semicolon as per the HTTP spec
-            headers['Cookie'] = cookieJar[requestDomain].join('; ');
-            remoteLog(`[SW] Attached cookies for ${requestDomain}`);
+        const savedCookies = await getCookies(requestDomain);
+        if (savedCookies && savedCookies.length > 0) {
+            headers['Cookie'] = savedCookies.join('; ');
+            remoteLog(`[SW] Attached persistent cookies for ${requestDomain}`);
         }
 
         // NEW: Read the request body if it's a POST/PUT/PATCH
@@ -166,15 +202,8 @@ async function handleProxyRequest(request, url) {
 
             // NEW: Save the intercepted cookies for this domain
             if (msg.setCookies && msg.setCookies.length > 0) {
-               if (!cookieJar[msg.targetDomain]) {
-                   cookieJar[msg.targetDomain] = [];
-               }
-               // In a real app, you'd parse the cookie string to handle expires/path/overwrites
-               // For now, we just push the raw string
-               msg.setCookies.forEach(cookieStr => {
-                   cookieJar[msg.targetDomain].push(cookieStr.split(';')[0]); // Keep just the Key=Value part
-               });
-               remoteLog(`[SW] Saved ${msg.setCookies.length} cookies for ${msg.targetDomain}`);
+              saveCookies(msg.targetDomain, msg.setCookies);
+              remoteLog(`[SW] Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
             }
 
             headersResolved = true;
