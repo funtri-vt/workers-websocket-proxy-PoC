@@ -121,7 +121,8 @@ export default {
 								// NEW: Only rewrite if it is actually an HTML document
 								if (contentType.includes("text/html")) {
 									const targetDomain = new URL(msg.url).hostname;
-									
+									const baseUrl = msg.url; // We need this to resolve relative links like href="/about"
+
 									class ScriptInjector {
 										element(element) {
 											const script = `
@@ -147,9 +148,35 @@ export default {
 											element.prepend(script, { html: true });
 										}
 									}
-									// Pass the original response through the rewriter
-									streamResponse = new HTMLRewriter().on("head", new ScriptInjector()).transform(res);
-								}
+									//NEW: The link rewriter
+									class AttributeRewriter {
+										constructor(attributeName) {
+											this.attributeName = attributeName;
+										}
+										element(element) {
+											const attribute = element.getAttribute(this.attributeName);
+											// Ignore empty links, anchor links (#), and data URIs
+											if (attribute && !attribute.startsWith('data:') && !attribute.startsWith('#')) {
+												try {
+													const absoluteUrl = new URL(attribute, baseUrl).toString();
+													element.setAttribute(this.attributeName, "/service/" + encodeURIComponent(absoluteUrl));
+												} catch (e) {
+													// If URL parsing fails, leave it alone
+												}
+											}
+										}
+									}
+
+									// Chain the rewriters together
+									streamResponse = new HTMLRewriter()
+										.on("head", new ScriptInjector())
+										.on("a", new AttributeRewriter("href"))
+										.on("img", new AttributeRewriter("src"))
+										.on("link", new AttributeRewriter("href"))
+										.on("form", new AttributeRewriter("action"))
+										.transform(res);
+
+									}
 
 								// Stream the (potentially modified) body back to the client
 								if (streamResponse.body) {
