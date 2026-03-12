@@ -71,52 +71,51 @@ self.addEventListener('fetch', event => {
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
   
-  // DEBUG 1: Initial state
-  remoteLog(`[SW Debug] Start: ${targetUrl} | Referer: ${request.referrer} | ActiveOrigin: ${activeProxyOrigin}`);
-
-  // 1. If it's a direct proxy request, extract it and update our known origin
+  // 1. Handle explicit proxy requests (Main Frame Navigations)
   if (targetUrl.startsWith('/service/')) {
     targetUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
-    try { 
-        activeProxyOrigin = new URL(targetUrl).origin; 
-        remoteLog(`[SW Debug] Extracted /service/ base. New ActiveOrigin: ${activeProxyOrigin}`);
-    } catch(e) {}
-  }
-
-  // 2. Resolve relative URLs
-  if (!/^https?:\/\//i.test(targetUrl)) {
-    const referer = request.referrer;
     
-    if (referer && referer.includes('/service/')) {
-      try {
-        const refUrl = new URL(referer);
-        const baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
-        const baseUrl = new URL(baseTarget.startsWith('http') ? baseTarget : 'https://' + baseTarget);
-        
-        targetUrl = new URL(targetUrl, baseUrl.origin).toString();
-        activeProxyOrigin = baseUrl.origin;
-        remoteLog(`[SW Debug] Path A (Referer Success) -> ${targetUrl}`);
-      } catch (e) {
-        remoteLog(`[SW Debug] Path B (Referer Parse Fail: ${e.message}). Using ActiveOrigin.`);
+    // Auto-append https:// if the user typed a raw domain (like "wikipedia.org")
+    if (!/^https?:\/\//i.test(targetUrl)) {
+      targetUrl = 'https://' + targetUrl;
+    }
+    
+    try { 
+        // ONLY update the fallback origin on main frame navigations
+        activeProxyOrigin = new URL(targetUrl).origin; 
+        remoteLog(`[SW] Main Nav! ActiveOrigin locked to: ${activeProxyOrigin}`);
+    } catch(e) {}
+    
+  } 
+  // 2. Handle Subresources & Relative URLs
+  else {
+    if (!/^https?:\/\//i.test(targetUrl)) {
+      const referer = request.referrer;
+      
+      if (referer && referer.includes('/service/')) {
         try {
-            targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
-        } catch(err) {
-            remoteLog(`[SW Debug] Path B2 (ActiveOrigin Parse Fail: ${err.message}).`);
-            targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
+          const refUrl = new URL(referer);
+          let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
+          if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
+          
+          const baseUrl = new URL(baseTarget);
+          targetUrl = new URL(targetUrl, baseUrl.origin).toString();
+        } catch (e) {
+          // Referer parsing failed, use the locked fallback origin
+          targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+        }
+      } else {
+        // No referer context at all? Use the locked fallback origin
+        try {
+          targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+        } catch(e) {
+          targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
         }
       }
-    } else {
-      remoteLog(`[SW Debug] Path C (No valid /service/ referer). Relying on ActiveOrigin.`);
-      try {
-        targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
-        remoteLog(`[SW Debug] Path C Success -> ${targetUrl}`);
-      } catch(e) {
-        remoteLog(`[SW Debug] Path D (ActiveOrigin Parse Fail: ${e.message}). Falling back to raw string concat.`);
-        targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
-      }
     }
-  } else {
-     try { activeProxyOrigin = new URL(targetUrl).origin; } catch(e) {}
+    
+    // CRITICAL FIX: We purposely DO NOT update activeProxyOrigin here anymore. 
+    // If the page loads a CDN image, we don't want to change our base origin!
   }
 
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
