@@ -92,8 +92,16 @@ export default {
 									const lowerKey = key.toLowerCase();
 									if (lowerKey === "content-type") contentType = value;
 									
-									// NEW: Also strip set-cookie so the browser doesn't see the original
-									if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie"].includes(lowerKey)) {
+									// NEW: Trap and rewrite redirects!
+									if (lowerKey === "location") {
+										try {
+											// Resolve relative redirects (like "/login") against the current URL
+											const absoluteLocation = new URL(value, msg.url).toString();
+											headersOut[key] = "/service/" + encodeURIComponent(absoluteLocation);
+										} catch (e) {
+											headersOut[key] = value;
+										}
+									}else if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
 								});
