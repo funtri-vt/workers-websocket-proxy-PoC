@@ -2,6 +2,8 @@
  * @typedef {Object} Env
  */
 
+import { DurableObject } from "cloudflare:workers";
+
 import indexHtml from "./index.html";
 import swJs from "./sw.js";
 
@@ -248,14 +250,13 @@ export default {
 // --------------------------------------------------------
 // Persistent WebSocket Router (Durable Object)
 // --------------------------------------------------------
-export class WebSocketProxy {
-	constructor(state, env) {
-		this.state = state;
-		this.env = env;
+export class WebSocketProxy extends DurableObject {
+	constructor(ctx, env) {
+		super(ctx, env); // Required for SQLite-backed objects
 	}
 
 	async fetch(request) {
-		// 1. Get the target WebSocket URL from the headers (we will send this from the client)
+		// 1. Get the target WebSocket URL from the headers
 		const targetUrl = request.headers.get("X-Target-WS");
 		if (!targetUrl) return new Response("Missing Target", { status: 400 });
 
