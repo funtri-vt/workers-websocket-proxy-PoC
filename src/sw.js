@@ -264,7 +264,7 @@ async function handleProxyRequest(request, url) {
             ws.close();
           }
         } else {
-          remoteLog(`[SW] Enqueuing ${event.data.byteLength} bytes.`);
+          //remoteLog(`[SW] Enqueuing ${event.data.byteLength} bytes.`);
           try { 
             streamController.enqueue(new Uint8Array(event.data)); 
           } catch(e) {
