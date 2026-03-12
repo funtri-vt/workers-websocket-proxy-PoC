@@ -245,3 +245,55 @@ export default {
 		return new Response("Not Found", { status: 404 });
 	},
 };
+// --------------------------------------------------------
+// Persistent WebSocket Router (Durable Object)
+// --------------------------------------------------------
+export class WebSocketProxy {
+	constructor(state, env) {
+		this.state = state;
+		this.env = env;
+	}
+
+	async fetch(request) {
+		// 1. Get the target WebSocket URL from the headers (we will send this from the client)
+		const targetUrl = request.headers.get("X-Target-WS");
+		if (!targetUrl) return new Response("Missing Target", { status: 400 });
+
+		// 2. Accept the incoming WebSocket from the user's browser
+		const { 0: clientSocket, 1: serverSocket } = new WebSocketPair();
+		serverSocket.accept();
+
+		try {
+			// 3. Open a WebSocket connection to the actual game server (Eaglercraft)
+			const targetSocket = new WebSocket(targetUrl);
+			targetSocket.accept();
+
+			// 4. Pipe messages from the Browser -> Game Server
+			serverSocket.addEventListener("message", event => {
+				if (targetSocket.readyState === WebSocket.READY_STATE_OPEN) {
+					targetSocket.send(event.data);
+				}
+			});
+
+			// 5. Pipe messages from the Game Server -> Browser
+			targetSocket.addEventListener("message", event => {
+				if (serverSocket.readyState === WebSocket.READY_STATE_OPEN) {
+					serverSocket.send(event.data);
+				}
+			});
+
+			// 6. Handle closures gracefully
+			serverSocket.addEventListener("close", () => targetSocket.close());
+			targetSocket.addEventListener("close", () => serverSocket.close());
+
+		} catch (err) {
+			serverSocket.close();
+		}
+
+		// Return the accepted connection to the client
+		return new Response(null, {
+			status: 101,
+			webSocket: clientSocket
+		});
+	}
+}
