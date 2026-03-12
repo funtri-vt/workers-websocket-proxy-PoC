@@ -280,7 +280,7 @@ export default {
 						const msg = JSON.parse(event.data);
 						
 						if (msg.type === "request") {
-                            server.send(JSON.stringify({ type: "info", message: `Preparing fetch for: \${msg.url}` }));
+                            server.send(JSON.stringify({ type: "info", message: `Preparing fetch for: ${msg.url}` }));
 
 							// Clean and reconstruct headers
               // Clean and reconstruct headers
@@ -314,7 +314,7 @@ export default {
                                 server.send(JSON.stringify({ type: "info", message: `Executing fetch()` }));
 								const res = await fetch(targetRequest);
 
-                                server.send(JSON.stringify({ type: "info", message: `Fetch complete. Status: \${res.status}` }));
+                                server.send(JSON.stringify({ type: "info", message: `Fetch complete. Status: ${res.status}` }));
 
 								const headersOut = {};
 								res.headers.forEach((value, key) => {
@@ -344,13 +344,13 @@ export default {
 							} catch (fetchError) {
 								server.send(JSON.stringify({ 
 									type: "error", 
-									message: `Backend fetch failed: \${fetchError.message}` 
+									message: `Backend fetch failed: ${fetchError.message}` 
 								}));
 								server.send(JSON.stringify({ type: "end" }));
 							}
 						}
 					} catch (e) {
-						server.send(JSON.stringify({ type: "error", message: `Worker error: \${e.message}` }));
+						server.send(JSON.stringify({ type: "error", message: `Worker error: ${e.message}` }));
 						server.send(JSON.stringify({ type: "end" }));
 					}
 				}
