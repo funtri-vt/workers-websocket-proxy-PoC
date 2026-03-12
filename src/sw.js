@@ -71,6 +71,8 @@ self.addEventListener('fetch', event => {
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
   
+  targetUrl = targetUrl.replace(/&amp;/g, '&');
+
   // A much safer way to check if this is a top-level page load
   const isDocument = request.destination === 'document' || request.destination === 'iframe';
 
