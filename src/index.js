@@ -73,6 +73,25 @@ export default {
 								fetchOptions.body = bytes;
 							}
 
+							// NEW: 1. Short-circuit CORS preflight requests (OPTIONS)
+							if (msg.method.toUpperCase() === "OPTIONS") {
+								safeSend(JSON.stringify({ type: "info", message: `Auto-answering CORS preflight for: ${msg.url}` }));
+								safeSend(JSON.stringify({
+									type: "response",
+									status: 200,
+									headers: {
+										"Access-Control-Allow-Origin": "*",
+										"Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+										"Access-Control-Allow-Headers": "*",
+										"Access-Control-Max-Age": "86400"
+									},
+									setCookies: [], 
+									targetDomain: new URL(msg.url).hostname
+								}));
+								safeSend(JSON.stringify({ type: "end" }));
+								return; // Stop processing this specific websocket message
+							}
+
 							const targetRequest = new Request(msg.url, fetchOptions);
 
 							try {
@@ -84,29 +103,30 @@ export default {
 								const headersOut = {};
 								let contentType = "";
 								
-								// NEW: Extract all Set-Cookie headers natively
-								// getSetCookie() prevents multiple cookies from being merged into one string
 								const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
 
 								res.headers.forEach((value, key) => {
 									const lowerKey = key.toLowerCase();
 									if (lowerKey === "content-type") contentType = value;
 									
-									// NEW: Trap and rewrite redirects!
 									if (lowerKey === "location") {
 										try {
-											// Resolve relative redirects (like "/login") against the current URL
 											const absoluteLocation = new URL(value, msg.url).toString();
 											headersOut[key] = "/service/" + encodeURIComponent(absoluteLocation);
 										} catch (e) {
 											headersOut[key] = value;
 										}
-									}else if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie"].includes(lowerKey)) {
+									} else if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
 								});
 
-								// NEW: Include our intercepted cookies in the payload
+								// NEW: 2. Inject permissive CORS headers into all real responses
+								headersOut["Access-Control-Allow-Origin"] = "*";
+								headersOut["Access-Control-Allow-Methods"] = "*";
+								headersOut["Access-Control-Allow-Headers"] = "*";
+								headersOut["Access-Control-Expose-Headers"] = "*";
+
 								safeSend(JSON.stringify({
 									type: "response",
 									status: res.status,
