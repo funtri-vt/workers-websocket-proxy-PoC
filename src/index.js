@@ -148,20 +148,31 @@ export default {
 											const script = `
 											<script>
 												(function() {
+													// 1. Advanced Storage Spoofing (Passes strict engine type checks)
 													const prefix = "${targetDomain}:";
-													const makeProxy = (real) => ({
-														getItem: (k) => real.getItem(prefix + k),
-														setItem: (k, v) => real.setItem(prefix + k, v),
-														removeItem: (k) => real.removeItem(prefix + k),
-														clear: () => {
-															for (let i = real.length - 1; i >= 0; i--) {
-																const key = real.key(i);
-																if (key && key.startsWith(prefix)) real.removeItem(key);
-															}
+													const makeProxy = (real) => new Proxy(real, {
+														get(target, prop) {
+															if (prop === 'getItem') return (k) => target.getItem(prefix + k);
+															if (prop === 'setItem') return (k, v) => target.setItem(prefix + k, v);
+															if (prop === 'removeItem') return (k) => target.removeItem(prefix + k);
+															if (prop === 'clear') return () => {
+																for (let i = target.length - 1; i >= 0; i--) {
+																	const key = target.key(i);
+																	if (key && key.startsWith(prefix)) target.removeItem(key);
+																}
+															};
+															// Bind native functions to prevent 'Illegal invocation' errors
+															return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
 														}
 													});
-													Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) });
-													Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) });
+													
+													try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
+													try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
+
+													// 2. Fix Keyboard Focus / Event Listener Crashes
+													// Forces the game to attach keyboard events locally instead of throwing CORS errors
+													try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
+													try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
 												})();
 											</script>`;
 											// Inject right after the <head> tag opens
