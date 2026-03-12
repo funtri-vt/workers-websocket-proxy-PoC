@@ -57,6 +57,21 @@ async function handleProxyRequest(request, url) {
 
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
 
+  // 3. The Ad Blocker
+  const blockList = [
+    'doubleclick.net',
+    'google-analytics.com',
+    'googlesyndication.com',
+    'amazon-adsystem.com',
+    'trackersimulator.org'
+  ];
+
+  if (blockList.some(domain => targetUrl.includes(domain))) {
+    remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetUrl}`);
+    // Return an empty, successful response immediately
+    return new Response(null, { status: 204 }); 
+  }
+  
   return new Promise((resolve) => {
     try {
       const wsUrl = new URL('/ws/', location.origin);
