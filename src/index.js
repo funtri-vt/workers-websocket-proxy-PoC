@@ -82,8 +82,10 @@ export default {
 								safeSend(JSON.stringify({ type: "info", message: `Fetch complete. Status: ${res.status}` }));
 
 								const headersOut = {};
+								let contentType = "";
 								res.headers.forEach((value, key) => {
 									const lowerKey = key.toLowerCase();
+									if (lowerKey === "content-type") contentType = value;
 									if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
@@ -95,12 +97,48 @@ export default {
 									headers: headersOut
 								}));
 
-								if (res.body) {
-									const reader = res.body.getReader();
+								// NEW: Prepare the response for streaming
+								let streamResponse = res;
+
+								// NEW: Only rewrite if it is actually an HTML document
+								if (contentType.includes("text/html")) {
+									const targetDomain = new URL(msg.url).hostname;
+									
+									class ScriptInjector {
+										element(element) {
+											const script = `
+											<script>
+												(function() {
+													const prefix = "${targetDomain}:";
+													const makeProxy = (real) => ({
+														getItem: (k) => real.getItem(prefix + k),
+														setItem: (k, v) => real.setItem(prefix + k, v),
+														removeItem: (k) => real.removeItem(prefix + k),
+														clear: () => {
+															for (let i = real.length - 1; i >= 0; i--) {
+																const key = real.key(i);
+																if (key && key.startsWith(prefix)) real.removeItem(key);
+															}
+														}
+													});
+													Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) });
+													Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) });
+												})();
+											</script>`;
+											// Inject right after the <head> tag opens
+											element.prepend(script, { html: true });
+										}
+									}
+									// Pass the original response through the rewriter
+									streamResponse = new HTMLRewriter().on("head", new ScriptInjector()).transform(res);
+								}
+
+								// Stream the (potentially modified) body back to the client
+								if (streamResponse.body) {
+									const reader = streamResponse.body.getReader();
 									while (true) {
 										const { done, value } = await reader.read();
 										if (done) break;
-										// If the socket dies during the stream, safeSend prevents a crash
 										safeSend(value); 
 									}
 								}
