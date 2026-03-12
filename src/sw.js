@@ -10,6 +10,9 @@ const dbPromise = new Promise((resolve, reject) => {
   request.onerror = () => reject('IDB Error');
 });
 
+// A fallback origin in case requests are missing referers
+let activeProxyOrigin = 'https://wikipedia.org';//set to our default url for now
+
 async function saveCookies(domain, newCookies) {
   try {
     const db = await dbPromise;
@@ -68,31 +71,42 @@ self.addEventListener('fetch', event => {
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
 
-  // 1. If it's the main frame request, strip the /service/ prefix
+  let targetUrl = url.pathname + url.search;
+
+  // 1. If it's a direct proxy request, extract it and update our known origin
   if (targetUrl.startsWith('/service/')) {
     targetUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
+    try { activeProxyOrigin = new URL(targetUrl).origin; } catch(e) {}
   }
 
-  // 2. If the URL doesn't have http:// or https://, it's a subresource
-  // ESCAPED REGEX: // prevents the string from turning into a JS comment
+  // 2. Resolve relative URLs (like /w/load.php)
   if (!/^https?:\/\//i.test(targetUrl)) {
     const referer = request.referrer;
     
-    if (referer) {
+    if (referer && referer.includes('/service/')) {
       try {
         const refUrl = new URL(referer);
         const baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
         const baseUrl = new URL(baseTarget.startsWith('http') ? baseTarget : 'https://' + baseTarget);
         
         targetUrl = new URL(targetUrl, baseUrl.origin).toString();
-        remoteLog(`[SW] Reconstructed relative URL via Referer: ${targetUrl}`);
+        activeProxyOrigin = baseUrl.origin; // Keep our fallback updated
       } catch (e) {
-        // ESCAPED REGEX: ^/
-        targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
+        // If referer parsing fails, use the fallback
+        targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
       }
     } else {
-      targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
+      // If there is no referer at all, rely entirely on the fallback
+      try {
+        targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+      } catch(e) {
+        // Absolute worst-case scenario fallback
+        targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
+      }
     }
+  } else {
+     // If it's already an absolute URL, update the active origin just in case
+     try { activeProxyOrigin = new URL(targetUrl).origin; } catch(e) {}
   }
 
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
