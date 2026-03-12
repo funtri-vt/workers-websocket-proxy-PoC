@@ -70,16 +70,20 @@ self.addEventListener('fetch', event => {
 
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
-
-  let targetUrl = url.pathname + url.search;
+  
+  // DEBUG 1: Initial state
+  remoteLog(`[SW Debug] Start: ${targetUrl} | Referer: ${request.referrer} | ActiveOrigin: ${activeProxyOrigin}`);
 
   // 1. If it's a direct proxy request, extract it and update our known origin
   if (targetUrl.startsWith('/service/')) {
     targetUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
-    try { activeProxyOrigin = new URL(targetUrl).origin; } catch(e) {}
+    try { 
+        activeProxyOrigin = new URL(targetUrl).origin; 
+        remoteLog(`[SW Debug] Extracted /service/ base. New ActiveOrigin: ${activeProxyOrigin}`);
+    } catch(e) {}
   }
 
-  // 2. Resolve relative URLs (like /w/load.php)
+  // 2. Resolve relative URLs
   if (!/^https?:\/\//i.test(targetUrl)) {
     const referer = request.referrer;
     
@@ -90,22 +94,28 @@ async function handleProxyRequest(request, url) {
         const baseUrl = new URL(baseTarget.startsWith('http') ? baseTarget : 'https://' + baseTarget);
         
         targetUrl = new URL(targetUrl, baseUrl.origin).toString();
-        activeProxyOrigin = baseUrl.origin; // Keep our fallback updated
+        activeProxyOrigin = baseUrl.origin;
+        remoteLog(`[SW Debug] Path A (Referer Success) -> ${targetUrl}`);
       } catch (e) {
-        // If referer parsing fails, use the fallback
-        targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+        remoteLog(`[SW Debug] Path B (Referer Parse Fail: ${e.message}). Using ActiveOrigin.`);
+        try {
+            targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+        } catch(err) {
+            remoteLog(`[SW Debug] Path B2 (ActiveOrigin Parse Fail: ${err.message}).`);
+            targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
+        }
       }
     } else {
-      // If there is no referer at all, rely entirely on the fallback
+      remoteLog(`[SW Debug] Path C (No valid /service/ referer). Relying on ActiveOrigin.`);
       try {
         targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+        remoteLog(`[SW Debug] Path C Success -> ${targetUrl}`);
       } catch(e) {
-        // Absolute worst-case scenario fallback
+        remoteLog(`[SW Debug] Path D (ActiveOrigin Parse Fail: ${e.message}). Falling back to raw string concat.`);
         targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
       }
     }
   } else {
-     // If it's already an absolute URL, update the active origin just in case
      try { activeProxyOrigin = new URL(targetUrl).origin; } catch(e) {}
   }
 
