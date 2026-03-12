@@ -70,52 +70,55 @@ self.addEventListener('fetch', event => {
 
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
-  
-  // 1. Handle explicit proxy requests (Main Frame Navigations)
+
+  // 1. Handle explicit proxy requests (Prefix: /service/)
   if (targetUrl.startsWith('/service/')) {
     targetUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
     
-    // Auto-append https:// if the user typed a raw domain (like "wikipedia.org")
     if (!/^https?:\/\//i.test(targetUrl)) {
       targetUrl = 'https://' + targetUrl;
     }
     
-    try { 
-        // ONLY update the fallback origin on main frame navigations
-        activeProxyOrigin = new URL(targetUrl).origin; 
-        remoteLog(`[SW] Main Nav! ActiveOrigin locked to: ${activeProxyOrigin}`);
-    } catch(e) {}
-    
+    // CRITICAL FIX: Only update the fallback origin if the user is loading a full webpage, 
+    // NOT when the page is just fetching an image or script that happens to use /service/
+    if (request.mode === 'navigate') {
+      try { 
+          activeProxyOrigin = new URL(targetUrl).origin; 
+          remoteLog(`[SW] Main Nav! ActiveOrigin locked to: ${activeProxyOrigin}`);
+      } catch(e) {}
+    }
   } 
-  // 2. Handle Subresources & Relative URLs
+  // 2. Handle Relative URLs
   else {
     if (!/^https?:\/\//i.test(targetUrl)) {
       const referer = request.referrer;
-      
+      let resolved = false;
+
       if (referer && referer.includes('/service/')) {
         try {
           const refUrl = new URL(referer);
           let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
           if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
           
+          // NEW: Resolve against the full base URL, not just the origin, 
+          // to properly handle relative paths like "./image.png"
           const baseUrl = new URL(baseTarget);
-          targetUrl = new URL(targetUrl, baseUrl.origin).toString();
+          targetUrl = new URL(targetUrl, baseUrl.href).toString();
+          resolved = true;
         } catch (e) {
-          // Referer parsing failed, use the locked fallback origin
-          targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
+          // Parsing failed, drop down to fallback
         }
-      } else {
-        // No referer context at all? Use the locked fallback origin
+      } 
+      
+      if (!resolved) {
         try {
+          // Fallback to our locked origin
           targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
         } catch(e) {
           targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
         }
       }
     }
-    
-    // CRITICAL FIX: We purposely DO NOT update activeProxyOrigin here anymore. 
-    // If the page loads a CDN image, we don't want to change our base origin!
   }
 
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
