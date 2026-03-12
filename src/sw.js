@@ -48,10 +48,10 @@ async function handleProxyRequest(request, url) {
         remoteLog(`[SW] Reconstructed relative URL via Referer: ${targetUrl}`);
       } catch (e) {
         // ESCAPED REGEX: ^/
-        targetUrl = 'https://' + targetUrl.replace(/^//, ''); 
+        targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
       }
     } else {
-      targetUrl = 'https://' + targetUrl.replace(/^//, ''); 
+      targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
     }
   }
 
