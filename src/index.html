@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Custom WS Proxy</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+    #bar { padding: 10px; background: #222; color: #fff; display: flex; gap: 10px; align-items: center; }
+    #url-input { flex-grow: 1; padding: 8px; font-size: 16px; border-radius: 4px; border: none; }
+    button { padding: 8px 15px; font-size: 16px; cursor: pointer; border-radius: 4px; border: none; background: #007bff; color: white; }
+    #frame { flex-grow: 1; border: none; width: 100%; background: #fff; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <strong>SW Proxy</strong>
+    <input type="text" id="url-input" placeholder="wikipedia.org" value="wikipedia.org" />
+    <button onclick="loadUrl()">Go</button>
+  </div>
+  <iframe id="frame"></iframe>
+  <script>
+  ;(function () {
+    var src = '//cdn.jsdelivr.net/npm/eruda';
+    if (!/eruda=true/.test(window.location) && localStorage.getItem('active-eruda') != 'true') return;
+    document.write('<scr' + 'ipt src="' + src + '"></scr' + 'ipt>');
+    document.write('<scr' + 'ipt>eruda.init();</scr' + 'ipt>');
+  })();
+  </script>
+  <script>
+    // LISTEN FOR LOGS FROM THE SERVICE WORKER AND PIPE TO ERUDA
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data && event.data.type === 'sw-log') {
+        console.log(event.data.message);
+      }
+    });
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .then(() => console.log('[Client] Service Worker registered.'))
+        .catch(err => console.error('[Client] SW Error:', err));
+    }
+
+    function loadUrl() {
+      const input = document.getElementById('url-input').value;
+      const frame = document.getElementById('frame');
+      console.log('[Client] Loading iframe with target:', input);
+      frame.src = '/service/' + encodeURIComponent(input); 
+    }
+  </script>
+</body>
+</html>
