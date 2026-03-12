@@ -35,7 +35,7 @@ async function handleProxyRequest(request, url) {
 
   // 2. If the URL doesn't have http:// or https://, it's a subresource
   // ESCAPED REGEX: // prevents the string from turning into a JS comment
-  if (!/^https?://i.test(targetUrl)) {
+  if (!/^https?:\/\//i.test(targetUrl)) {
     const referer = request.referrer;
     
     if (referer) {
