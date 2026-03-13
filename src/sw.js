@@ -11,7 +11,20 @@ const dbPromise = new Promise((resolve, reject) => {
 });
 
 // A fallback origin in case requests are missing referers
-let activeProxyOrigin = 'https://wikipedia.org';//set to our default url for now
+let activeProxyOrigin = 'https://wikipedia.org'; 
+
+// --- SECURITY FIX 1: HTML Sanitizer Helper ---
+const escapeHTML = (str) => {
+  return String(str).replace(/[&<>'"]/g, 
+    tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag)
+  );
+};
 
 async function saveCookies(domain, newCookies) {
   try {
@@ -19,11 +32,9 @@ async function saveCookies(domain, newCookies) {
     const tx = db.transaction('cookies', 'readwrite');
     const store = tx.objectStore('cookies');
     
-    // Get existing cookies
     const existingReq = store.get(domain);
     existingReq.onsuccess = () => {
       let current = existingReq.result || [];
-      // Simple merge: just add the new ones (in a real app, you'd match and overwrite keys)
       const merged = [...current, ...newCookies.map(c => c.split(';')[0])];
       store.put([...new Set(merged)], domain);
     };
@@ -49,7 +60,6 @@ self.addEventListener('activate', event => {
   event.waitUntil(clients.claim());
 });
 
-// Helper to send logs to the main window (Eruda)
 function remoteLog(msg) {
   console.log(msg); 
   self.clients.matchAll({ includeUncontrolled: true }).then(clients => {
@@ -60,7 +70,6 @@ function remoteLog(msg) {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   
-  // Let the browser handle the root UI, the SW script, and the websocket path
   if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname === '/ws/') {
     return;
   }
@@ -70,14 +79,10 @@ self.addEventListener('fetch', event => {
 
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
-  
   const isDocument = request.destination === 'document' || request.destination === 'iframe';
 
   if (targetUrl.startsWith('/service/')) {
-    // 1. Decode the URL FIRST
     let innerUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
-    
-    // 2. NOW safely rip out those annoying HTML entities
     innerUrl = innerUrl.replace(/&amp;/g, '&');
     
     if (!/^https?:\/\//i.test(innerUrl)) {
@@ -86,7 +91,6 @@ async function handleProxyRequest(request, url) {
         try {
           const refUrl = new URL(referer);
           let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
-          // Also clean the base target just in case
           baseTarget = baseTarget.replace(/&amp;/g, '&'); 
           
           if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
@@ -108,7 +112,6 @@ async function handleProxyRequest(request, url) {
     }
   } 
   else {
-    // Also clean URLs that bypassed the rewriter
     targetUrl = targetUrl.replace(/&amp;/g, '&');
     
     if (!/^https?:\/\//i.test(targetUrl)) {
@@ -136,7 +139,7 @@ async function handleProxyRequest(request, url) {
 
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
 
-  // 3. The Ad Blocker
+  // --- SECURITY FIX 3: Hostname-specific Ad Blocking ---
   const blockList = [
     'doubleclick.net',
     'google-analytics.com',
@@ -145,10 +148,14 @@ async function handleProxyRequest(request, url) {
     'trackersimulator.org'
   ];
 
-  if (blockList.some(domain => targetUrl.includes(domain))) {
-    remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetUrl}`);
-    // Return an empty, successful response immediately
-    return new Response(null, { status: 204 }); 
+  try {
+    const targetHost = new URL(targetUrl).hostname;
+    if (blockList.some(domain => targetHost.includes(domain))) {
+      remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
+      return new Response(null, { status: 204 }); 
+    }
+  } catch(e) {
+    // If it fails to parse, it might be a malformed URL, we can let it proceed to error out natively
   }
 
   return new Promise((resolve) => {
@@ -173,11 +180,12 @@ async function handleProxyRequest(request, url) {
         remoteLog(`[SW] Sending error screen: ${errorMsg}`);
         if (!headersResolved) {
           headersResolved = true;
+          // --- SECURITY FIX 1 (Applied): Escaping dynamic variables ---
           const errorHtml = `
             <div style="font-family: monospace; padding: 20px; color: #d8000c; background: #ffbaba; border: 1px solid #d8000c; border-radius: 5px;">
               <h2>Proxy Error</h2>
-              <p><strong>Target:</strong> ${targetUrl}</p>
-              <p><strong>Details:</strong> ${errorMsg}</p>
+              <p><strong>Target:</strong> ${escapeHTML(targetUrl)}</p>
+              <p><strong>Details:</strong> ${escapeHTML(errorMsg)}</p>
             </div>
           `;
           resolve(new Response(errorHtml, {
@@ -192,18 +200,34 @@ async function handleProxyRequest(request, url) {
         const headers = {};
         request.headers.forEach((value, key) => headers[key] = value);
         
-        const requestDomain = new URL(targetUrl).hostname;
+        let requestDomain = "";
+        try {
+          requestDomain = new URL(targetUrl).hostname;
+        } catch(e) {}
+
         const savedCookies = await getCookies(requestDomain);
         if (savedCookies && savedCookies.length > 0) {
             headers['Cookie'] = savedCookies.join('; ');
             remoteLog(`[SW] Attached persistent cookies for ${requestDomain}`);
         }
 
-        // NEW: Read the request body if it's a POST/PUT/PATCH
         let encodedBody = null;
         if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
           try {
+            // --- SECURITY FIX 2: Prevent memory crashes with a 5MB payload limit ---
+            const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
+            const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024; // 5MB limit
+            
+            if (contentLength > MAX_PAYLOAD_SIZE) {
+               throw new Error("Payload too large. Maximum size is 5MB.");
+            }
+
             const buffer = await request.clone().arrayBuffer();
+            
+            if (buffer.byteLength > MAX_PAYLOAD_SIZE) {
+               throw new Error("Payload too large. Maximum size is 5MB.");
+            }
+
             if (buffer.byteLength > 0) {
               const bytes = new Uint8Array(buffer);
               let binary = '';
@@ -222,7 +246,7 @@ async function handleProxyRequest(request, url) {
           url: targetUrl,
           method: request.method,
           headers: headers,
-          body: encodedBody // NEW: Send the body to the backend
+          body: encodedBody 
         }));
       };
 
@@ -239,13 +263,20 @@ async function handleProxyRequest(request, url) {
               responseHeaders.set(key, value);
             }
 
-            // NEW: Save the intercepted cookies for this domain
-            if (msg.setCookies && msg.setCookies.length > 0) {
-              saveCookies(msg.targetDomain, msg.setCookies);
-              remoteLog(`[SW] Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
+            // --- SECURITY FIX 4: Prevent Cross-Origin Cookie Forgery ---
+            if (msg.setCookies && msg.setCookies.length > 0 && msg.targetDomain) {
+               try {
+                 const expectedDomain = new URL(targetUrl).hostname;
+                 // Ensure the requested cookie domain is a substring of the actual target URL
+                 // e.g., msg.targetDomain ".google.com" is valid for "accounts.google.com"
+                 if (expectedDomain.endsWith(msg.targetDomain.replace(/^\./, ''))) {
+                   saveCookies(msg.targetDomain, msg.setCookies);
+                   remoteLog(`[SW] Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
+                 } else {
+                   remoteLog(`[SW] ⚠️ Blocked cross-origin cookie set attempt for ${msg.targetDomain}`);
+                 }
+               } catch(e) {}
             }
-
-            headersResolved = true;
 
             headersResolved = true;
             resolve(new Response(stream, {
@@ -261,7 +292,6 @@ async function handleProxyRequest(request, url) {
             ws.close();
           }
         } else {
-          //remoteLog(`[SW] Enqueuing ${event.data.byteLength} bytes.`);
           try { 
             streamController.enqueue(new Uint8Array(event.data)); 
           } catch(e) {
@@ -284,7 +314,8 @@ async function handleProxyRequest(request, url) {
       };
 
     } catch (err) {
-      resolve(new Response(`<h2>Internal SW Error</h2><pre>${err.message}</pre>`, {
+      // --- SECURITY FIX 1 (Applied): Escaping dynamic variables ---
+      resolve(new Response(`<h2>Internal SW Error</h2><pre>${escapeHTML(err.message)}</pre>`, {
         status: 500,
         headers: { 'Content-Type': 'text/html' }
       }));

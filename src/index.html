@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <title>SW Proxy Engine</title>
+  
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; frame-src 'self';">
+  
   <style>
     :root {
       --bg-dark: #1e1e2e;
@@ -105,22 +108,18 @@
     <button class="btn-logs" id="downloadLogsBtn">💾 Get Logs</button>
   </div>
   
-  <iframe allow="pointer-lock; keyboard-map; fullscreen" tabindex="0" id="frame"></iframe>
+  <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="pointer-lock; keyboard-map; fullscreen" tabindex="0" id="frame"></iframe>
 
   <script>
     // --- 1. Logging Engine ---
+    // Suggestion 4: Targeted logging instead of overriding standard console.log
     window.appLogs = [];
-    function captureLog(source, message) {
+    function proxyLog(source, message) {
       const timestamp = new Date().toISOString().split('T')[1].replace('Z', '');
-      window.appLogs.push(`[${timestamp}] [${source}] ${message}`);
+      const logEntry = `[${timestamp}] [${source}] ${message}`;
+      window.appLogs.push(logEntry);
+      console.log(logEntry); // Still output to standard DevTools safely
     }
-
-    const originalConsoleLog = console.log;
-    console.log = function(...args) {
-      originalConsoleLog.apply(console, args); 
-      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
-      captureLog('Client', msg);
-    };
 
     document.getElementById('downloadLogsBtn').addEventListener('click', () => {
       if (window.appLogs.length === 0) return alert("No logs captured yet!");
@@ -137,13 +136,16 @@
 
     // --- 2. Service Worker Bridge ---
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' })
-        .then(() => console.log('Service Worker registered.'))
-        .catch(err => console.error('SW Error:', err));
+      // Suggestion 3: Scoped Service Worker
+      // Note: You may need to send a 'Service-Worker-Allowed: /' header from your web server 
+      // for this to work if sw.js is served from the root directory but scoped to /service/
+      navigator.serviceWorker.register('/sw.js', { scope: '/service/' })
+        .then(() => proxyLog('System', 'Service Worker registered with scoped access.'))
+        .catch(err => proxyLog('System Error', `SW Registration failed: ${err}`));
 
       navigator.serviceWorker.addEventListener('message', event => {
         if (event.data && event.data.type === 'sw-log') {
-          captureLog('SW/Backend', event.data.message);
+          proxyLog('SW/Backend', event.data.message);
         }
       });
     }
@@ -153,7 +155,7 @@
       const input = document.getElementById('url-input').value.trim();
       if (!input) return;
       const frame = document.getElementById('frame');
-      console.log('Routing to:', input);
+      proxyLog('Client', `Routing to: ${input}`);
       frame.src = '/service/' + encodeURIComponent(input); 
     }
 
@@ -166,8 +168,17 @@
     (function () {
       if (!/eruda=true/.test(window.location.search) && localStorage.getItem('active-eruda') !== 'true') return;
       var script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/eruda';
-      script.onload = function () { eruda.init(); };
+      
+      // Suggestion 2: Hardcode version and set up SRI. 
+      // You must generate the sha256 hash using srihash.org for the specific file you are loading.
+      script.src = 'https://cdn.jsdelivr.net/npm/eruda@3.0.1/eruda.min.js';
+      script.crossOrigin = 'anonymous';
+      // script.integrity = 'sha256-PLACEHOLDER_HASH_GOES_HERE'; 
+      
+      script.onload = function () { 
+        eruda.init(); 
+        proxyLog('System', 'Eruda DevTools injected successfully.');
+      };
       document.head.appendChild(script);
     })();
   </script>
