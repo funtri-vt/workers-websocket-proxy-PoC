@@ -309,10 +309,38 @@ export class WebSocketProxy extends DurableObject {
 		serverSocket.accept();
 		targetSocket.accept();
 
-		serverSocket.addEventListener("message", event => targetSocket.send(event.data));
-		targetSocket.addEventListener("message", event => serverSocket.send(event.data));
+		// Helper to format and log the raw data
+		const logPacket = (direction, data) => {
+			try {
+				if (typeof data === "string") {
+					console.log(`[DO] ${direction} | TEXT (${data.length} chars): ${data.substring(0, 100)}${data.length > 100 ? '...' : ''}`);
+				} else {
+					// Handle binary ArrayBuffer data
+					const bytes = new Uint8Array(data);
+					// Log the first 16 bytes in hex format for easy reading
+					const hexString = Array.from(bytes.slice(0, 16))
+						.map(b => b.toString(16).padStart(2, '0'))
+						.join(' ');
+					console.log(`[DO] ${direction} | BINARY (${bytes.byteLength} bytes): ${hexString}${bytes.byteLength > 16 ? ' ...' : ''}`);
+				}
+			} catch (e) {
+				console.log(`[DO] ${direction} | Error logging packet: ${e.message}`);
+			}
+		};
+
+		// Intercept, log, and forward
+		serverSocket.addEventListener("message", event => {
+			logPacket("Client -> Server", event.data);
+			targetSocket.send(event.data);
+		});
+		
+		targetSocket.addEventListener("message", event => {
+			logPacket("Server -> Client", event.data);
+			serverSocket.send(event.data);
+		});
 
 		const closeBoth = () => {
+			console.log(`[DO] Connection Closed`);
 			try { serverSocket.close(); } catch(e){}
 			try { targetSocket.close(); } catch(e){}
 		};
@@ -326,6 +354,7 @@ export class WebSocketProxy extends DurableObject {
 		const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
 		if (acceptedProtocol) {
 			responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
+			console.log(`[DO] Handshake accepted protocol: ${acceptedProtocol}`);
 		}
 
 		return new Response(null, {
