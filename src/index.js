@@ -171,19 +171,7 @@ export default {
 													try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
 													try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
 
-													// 4. NEW: Eruda DevTools Injector
-													try {
-														const wantsEruda = true;//window.location.search.includes('eruda=true') || 
-																		   //(window.top && window.top.location.search.includes('eruda=true'));
-														
-														if (wantsEruda) {
-															const erudaScript = document.createElement('script');
-															erudaScript.src = "https://cdn.jsdelivr.net/npm/eruda";
-															erudaScript.onload = () => eruda.init();
-															document.documentElement.appendChild(erudaScript);
-														}
-													} catch(e) {}
-
+													
 													// 2. Fix Keyboard Focus / Event Listener Crashes
 													// Forces the game to attach keyboard events locally instead of throwing CORS errors
 													try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
@@ -208,6 +196,19 @@ export default {
 													// Copy over static properties so the game doesn't notice it's a fake class
 													window.WebSocket.prototype = OriginalWebSocket.prototype;
 													Object.assign(window.WebSocket, OriginalWebSocket);
+
+													// 4. NEW: Eruda DevTools Injector
+													try {
+														const wantsEruda = window.location.search.includes('eruda=true') || 
+																		   (window.top && window.top.location.search.includes('eruda=true'));
+														
+														if (wantsEruda) {
+															const erudaScript = document.createElement('script');
+															erudaScript.src = "https://cdn.jsdelivr.net/npm/eruda";
+															erudaScript.onload = () => eruda.init();
+															document.documentElement.appendChild(erudaScript);
+														}
+													} catch(e) {}
 												})();
 											</script>`;
 											// Inject right after the <head> tag opens
