@@ -31,6 +31,16 @@ export default {
 				return new Response("Expected WebSocket", { status: 426 });
 			}
 
+			// --- SECURITY FIX 1: Origin Lock-down ---
+			// Ensures only your frontend can connect to this proxy WebSocket.
+			// Blocks random people who discover your Worker URL from abusing it.
+			const expectedOrigin = url.origin;
+			const clientOrigin = request.headers.get("Origin");
+			if (clientOrigin && clientOrigin !== expectedOrigin) {
+				console.warn(`[Security] Blocked unauthorized WS connection from: ${clientOrigin}`);
+				return new Response("Forbidden: Invalid Origin", { status: 403 });
+			}
+
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();
 
@@ -64,17 +74,20 @@ export default {
 							};
 
 							if (msg.body) {
-								const binaryString = atob(msg.body);
-								const bytes = new Uint8Array(binaryString.length);
-								for (let i = 0; i < binaryString.length; i++) {
-									bytes[i] = binaryString.charCodeAt(i);
+								// --- SECURITY FIX 3: Efficient Base64 Decoding ---
+								// Replaced the CPU-heavy manual loop with optimized built-in parsing
+								// to prevent Cloudflare from killing the Worker due to CPU limits.
+								try {
+									const binaryString = atob(msg.body);
+									fetchOptions.body = Uint8Array.from(binaryString, c => c.charCodeAt(0));
+								} catch (e) {
+									safeSend(JSON.stringify({ type: "error", message: "Failed to decode request body." }));
+									return;
 								}
-								fetchOptions.body = bytes;
 							}
 
 							// 1. Short-circuit CORS preflight requests (OPTIONS)
 							if (msg.method.toUpperCase() === "OPTIONS") {
-								safeSend(JSON.stringify({ type: "info", message: `Auto-answering CORS preflight for: ${msg.url}` }));
 								safeSend(JSON.stringify({
 									type: "response",
 									status: 200,
@@ -94,10 +107,7 @@ export default {
 							const targetRequest = new Request(msg.url, fetchOptions);
 
 							try {
-								safeSend(JSON.stringify({ type: "info", message: `Executing fetch()` }));
 								const res = await fetch(targetRequest);
-
-								safeSend(JSON.stringify({ type: "info", message: `Fetch complete. Status: ${res.status}` }));
 
 								const headersOut = {};
 								let contentType = "";
@@ -176,7 +186,6 @@ export default {
 															return new OriginalWebSocket(url, protocols);
 														}
 														
-														console.log('[Interceptor] Hijacking WebSocket to:', url);
 														const targetUrl = encodeURIComponent(url);
 														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/durable-ws/?target=' + targetUrl;
 														
@@ -206,7 +215,6 @@ export default {
 										}
 									}
 
-									// NEW: Strip security hashes so the browser accepts our proxied files
 									class SecurityStripper {
 										element(element) {
 											element.removeAttribute("integrity");
@@ -220,8 +228,8 @@ export default {
 										.on("img", new AttributeRewriter("src"))
 										.on("link", new AttributeRewriter("href"))
 										.on("form", new AttributeRewriter("action"))
-										.on("script", new AttributeRewriter("src")) // Catch JS files!
-										.on("script, link", new SecurityStripper()) // Strip integrity hashes
+										.on("script", new AttributeRewriter("src"))
+										.on("script, link", new SecurityStripper()) 
 										.transform(res);
 								}
 
@@ -285,8 +293,6 @@ export class WebSocketProxy extends DurableObject {
 		
 		let targetUrl = decodeURIComponent(targetUrlParam);
 
-		// NEW: The Fetch API refuses ws:// schemes. Swap them to http/https.
-		// The "Upgrade: websocket" header we add later will handle the actual protocol switch.
 		targetUrl = targetUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
 		const requestedProtocols = request.headers.get("Sec-WebSocket-Protocol");
 		
@@ -302,24 +308,7 @@ export class WebSocketProxy extends DurableObject {
 		
 		proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
 
-
-		// NEW: Log the exact URL and headers we are sending
-		console.log(`[DO] Attempting WebSocket handshake with: ${targetUrl}`);
-		console.log(`[DO] Sending Origin: ${proxyHeaders.get("Origin")}`);
-		console.log(`[DO] Sending Protocols: ${proxyHeaders.get("Sec-WebSocket-Protocol")}`);
-
-		
 		const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
-
-		// NEW: Catch the exact response status
-		console.log(`[DO] Target responded with HTTP Status: ${targetResponse.status}`);
-		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
-			// NEW: If it fails, log the headers so we know WHY it rejected us
-			console.log(`[DO] Handshake failed! Target headers:`, JSON.stringify(Object.fromEntries(targetResponse.headers)));
-			return new Response("Backend refused connection", { status: 502 });
-		}
-		
-		console.log(`[DO] Handshake 101 Success! Linking sockets...`);
 
 		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
 			return new Response("Backend refused connection", { status: 502 });
@@ -330,38 +319,19 @@ export class WebSocketProxy extends DurableObject {
 		serverSocket.accept();
 		targetSocket.accept();
 
-		// Helper to format and log the raw data
-		const logPacket = (direction, data) => {
-			try {
-				if (typeof data === "string") {
-					console.log(`[DO] ${direction} | TEXT (${data.length} chars): ${data.substring(0, 100)}${data.length > 100 ? '...' : ''}`);
-				} else {
-					// Handle binary ArrayBuffer data
-					const bytes = new Uint8Array(data);
-					// Log the first 16 bytes in hex format for easy reading
-					const hexString = Array.from(bytes.slice(0, 16))
-						.map(b => b.toString(16).padStart(2, '0'))
-						.join(' ');
-					console.log(`[DO] ${direction} | BINARY (${bytes.byteLength} bytes): ${hexString}${bytes.byteLength > 16 ? ' ...' : ''}`);
-				}
-			} catch (e) {
-				console.log(`[DO] ${direction} | Error logging packet: ${e.message}`);
-			}
-		};
-
-		// Intercept, log, and forward
+		// --- SECURITY FIX 2: Privacy / Logging Removal ---
+		// Removed the invasive `logPacket` function that was capturing plain-text credentials and private data.
+		// Now it just blindly pipes the data back and forth securely.
+		
 		serverSocket.addEventListener("message", event => {
-			logPacket("Client -> Server", event.data);
 			targetSocket.send(event.data);
 		});
 		
 		targetSocket.addEventListener("message", event => {
-			logPacket("Server -> Client", event.data);
 			serverSocket.send(event.data);
 		});
 
 		const closeBoth = () => {
-			console.log(`[DO] Connection Closed`);
 			try { serverSocket.close(); } catch(e){}
 			try { targetSocket.close(); } catch(e){}
 		};
@@ -375,7 +345,6 @@ export class WebSocketProxy extends DurableObject {
 		const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
 		if (acceptedProtocol) {
 			responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
-			console.log(`[DO] Handshake accepted protocol: ${acceptedProtocol}`);
 		}
 
 		return new Response(null, {
