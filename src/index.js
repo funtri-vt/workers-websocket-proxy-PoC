@@ -284,50 +284,73 @@ export default {
 // --------------------------------------------------------
 export class WebSocketProxy extends DurableObject {
 	constructor(ctx, env) {
-		super(ctx, env); // Required for SQLite-backed objects
+		super(ctx, env);
 	}
 
 	async fetch(request) {
-		// 1. Get the target WebSocket URL from the query string (Browser WS can't set headers)
+		// 1. Get the target WebSocket URL
 		const url = new URL(request.url);
-		const targetUrl = url.searchParams.get("target");
-		if (!targetUrl) return new Response("Missing Target", { status: 400 });
+		const targetUrlParam = url.searchParams.get("target");
+		if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
+		
+		const targetUrl = decodeURIComponent(targetUrlParam);
 
-		// 2. Accept the incoming WebSocket from the user's browser
+		// 2. Grab Eaglercraft's special subprotocols from the browser's request
+		const requestedProtocols = request.headers.get("Sec-WebSocket-Protocol");
+		
+		// 3. Prepare headers for the real game server
+		const proxyHeaders = new Headers();
+		proxyHeaders.set("Upgrade", "websocket");
+		if (requestedProtocols) {
+			proxyHeaders.set("Sec-WebSocket-Protocol", requestedProtocols);
+		}
+		
+		// CRITICAL: spoof the Origin so game servers don't think we are a bot/scraper
+		try { 
+			proxyHeaders.set("Origin", new URL(targetUrl).origin); 
+		} catch(e) {}
+		
+		proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
+
+		// 4. Connect to the real game server 
+		const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
+
+		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
+			return new Response("Backend refused connection", { status: 502 });
+		}
+		
+		const targetSocket = targetResponse.webSocket;
+
+		// 5. Accept browser's socket
 		const { 0: clientSocket, 1: serverSocket } = new WebSocketPair();
 		serverSocket.accept();
+		targetSocket.accept();
 
-		try {
-			// 3. Open a WebSocket connection to the actual game server (Eaglercraft)
-			const targetSocket = new WebSocket(targetUrl);
-			targetSocket.accept();
+		// 6. Pipe binary data bidirectionally
+		serverSocket.addEventListener("message", event => targetSocket.send(event.data));
+		targetSocket.addEventListener("message", event => serverSocket.send(event.data));
 
-			// 4. Pipe messages from the Browser -> Game Server
-			serverSocket.addEventListener("message", event => {
-				if (targetSocket.readyState === WebSocket.READY_STATE_OPEN) {
-					targetSocket.send(event.data);
-				}
-			});
+		const closeBoth = () => {
+			try { serverSocket.close(); } catch(e){}
+			try { targetSocket.close(); } catch(e){}
+		};
+		
+		serverSocket.addEventListener("close", closeBoth);
+		targetSocket.addEventListener("close", closeBoth);
+		serverSocket.addEventListener("error", closeBoth);
+		targetSocket.addEventListener("error", closeBoth);
 
-			// 5. Pipe messages from the Game Server -> Browser
-			targetSocket.addEventListener("message", event => {
-				if (serverSocket.readyState === WebSocket.READY_STATE_OPEN) {
-					serverSocket.send(event.data);
-				}
-			});
-
-			// 6. Handle closures gracefully
-			serverSocket.addEventListener("close", () => targetSocket.close());
-			targetSocket.addEventListener("close", () => serverSocket.close());
-
-		} catch (err) {
-			serverSocket.close();
+		// 7. Reply to the browser with the exact subprotocol the server accepted
+		const responseHeaders = new Headers();
+		const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
+		if (acceptedProtocol) {
+			responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
 		}
 
-		// Return the accepted connection to the client
 		return new Response(null, {
 			status: 101,
-			webSocket: clientSocket
+			webSocket: clientSocket,
+			headers: responseHeaders
 		});
 	}
 }
