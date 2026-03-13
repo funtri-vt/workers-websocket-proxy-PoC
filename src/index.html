@@ -1,109 +1,175 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Custom WS Proxy</title>
+  <meta charset="UTF-8">
+  <title>SW Proxy Engine</title>
   <style>
-    body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
-    #bar { padding: 10px; background: #222; color: #fff; display: flex; gap: 10px; align-items: center; }
-    #url-input { flex-grow: 1; padding: 8px; font-size: 16px; border-radius: 4px; border: none; }
-    button { padding: 8px 15px; font-size: 16px; cursor: pointer; border-radius: 4px; border: none; background: #007bff; color: white; }
-    #frame { flex-grow: 1; border: none; width: 100%; background: #fff; }
+    :root {
+      --bg-dark: #1e1e2e;
+      --bg-input: #313244;
+      --text-light: #cdd6f4;
+      --accent: #89b4fa;
+      --accent-hover: #74c7ec;
+    }
+    
+    body { 
+      margin: 0; 
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+      display: flex; 
+      flex-direction: column; 
+      height: 100vh; 
+      background-color: #000; 
+      overflow: hidden; 
+    }
+    
+    #bar { 
+      padding: 12px 20px; 
+      background: var(--bg-dark); 
+      display: flex; 
+      gap: 15px; 
+      align-items: center; 
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
+      z-index: 10; 
+    }
+    
+    .brand { 
+      font-weight: 800; 
+      letter-spacing: 1px; 
+      color: var(--accent); 
+      font-size: 18px;
+    }
+    
+    #url-input { 
+      flex-grow: 1; 
+      padding: 10px 16px; 
+      font-size: 15px; 
+      border-radius: 8px; 
+      border: 1px solid #45475a; 
+      background: var(--bg-input); 
+      color: var(--text-light); 
+      outline: none; 
+      transition: border 0.2s; 
+    }
+    
+    #url-input:focus { 
+      border-color: var(--accent); 
+    }
+    
+    button { 
+      padding: 10px 20px; 
+      font-size: 14px; 
+      font-weight: 600; 
+      cursor: pointer; 
+      border-radius: 8px; 
+      border: none; 
+      transition: all 0.2s ease; 
+    }
+    
+    .btn-go { 
+      background: var(--accent); 
+      color: #11111b; 
+    }
+    
+    .btn-go:hover { 
+      background: var(--accent-hover); 
+      transform: translateY(-1px); 
+    }
+    
+    .btn-logs { 
+      background: transparent; 
+      border: 1px solid #585b70; 
+      color: #bac2de; 
+      padding: 8px 12px; 
+      font-size: 12px;
+    }
+    
+    .btn-logs:hover { 
+      background: #585b70; 
+      color: #fff; 
+    }
+    
+    #frame { 
+      flex-grow: 1; 
+      border: none; 
+      width: 100%; 
+      background: #fff; 
+    }
   </style>
 </head>
 <body>
+  
   <div id="bar">
-    <strong>SW Proxy</strong>
-    <input type="text" id="url-input" placeholder="wikipedia.org" value="wikipedia.org" />
-    <button onclick="loadUrl()">Go</button>
-    <button id="downloadLogsBtn" style="padding: 10px; margin-top: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-  Download Debug Logs
-</button>
+    <div class="brand">PROXY.JS</div>
+    <input type="text" id="url-input" placeholder="Enter a URL (e.g., wikipedia.org)" value="wikipedia.org" autocomplete="off" spellcheck="false" />
+    <button class="btn-go" onclick="loadUrl()">Go</button>
+    <button class="btn-logs" id="downloadLogsBtn">💾 Get Logs</button>
+  </div>
+  
+  <iframe allow="pointer-lock; keyboard-map; fullscreen" tabindex="0" id="frame"></iframe>
 
-<script>
-  // The Download Logic
-  document.getElementById('downloadLogsBtn').addEventListener('click', () => {
-    if (window.appLogs.length === 0) {
-      alert("No logs captured yet!");
-      return;
+  <script>
+    // --- 1. Logging Engine ---
+    window.appLogs = [];
+    function captureLog(source, message) {
+      const timestamp = new Date().toISOString().split('T')[1].replace('Z', '');
+      window.appLogs.push(`[${timestamp}] [${source}] ${message}`);
     }
 
-    // Join all logs with a newline
-    const logText = window.appLogs.join('\n');
-    
-    // Create a Blob (a file-like object)
-    const blob = new Blob([logText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    
-    // Create a temporary hidden link to trigger the download
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `proxy-logs-${new Date().getTime()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    
-    // Cleanup
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  });
-</script>
-  </div>
-<iframe allow="pointer-lock; keyboard-map;" tabindex="0" style="width: 100%; height: 100%; border: none;" id="frame"></iframe>
-<script>
-  ;(function () {
-    var src = '//cdn.jsdelivr.net/npm/eruda';
-    if (!/eruda=true/.test(window.location) && localStorage.getItem('active-eruda') != 'true') return;
-    document.write('<scr' + 'ipt src="' + src + '"></scr' + 'ipt>');
-    document.write('<scr' + 'ipt>eruda.init();</scr' + 'ipt>');
-  })();
-  </script>
-  <script>
-    // LISTEN FOR LOGS FROM THE SERVICE WORKER AND PIPE TO ERUDA
-    navigator.serviceWorker.addEventListener('message', event => {
-      if (event.data && event.data.type === 'sw-log') {
-        console.log(event.data.message);
-      }
+    const originalConsoleLog = console.log;
+    console.log = function(...args) {
+      originalConsoleLog.apply(console, args); 
+      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
+      captureLog('Client', msg);
+    };
+
+    document.getElementById('downloadLogsBtn').addEventListener('click', () => {
+      if (window.appLogs.length === 0) return alert("No logs captured yet!");
+      const blob = new Blob([window.appLogs.join('\n')], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `proxy-logs-${new Date().getTime()}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     });
 
+    // --- 2. Service Worker Bridge ---
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { scope: '/' })
-        .then(() => console.log('[Client] Service Worker registered.'))
-        .catch(err => console.error('[Client] SW Error:', err));
+        .then(() => console.log('Service Worker registered.'))
+        .catch(err => console.error('SW Error:', err));
+
+      navigator.serviceWorker.addEventListener('message', event => {
+        if (event.data && event.data.type === 'sw-log') {
+          captureLog('SW/Backend', event.data.message);
+        }
+      });
     }
 
+    // --- 3. Routing Engine ---
     function loadUrl() {
-      const input = document.getElementById('url-input').value;
+      const input = document.getElementById('url-input').value.trim();
+      if (!input) return;
       const frame = document.getElementById('frame');
-      console.log('[Client] Loading iframe with target:', input);
+      console.log('Routing to:', input);
       frame.src = '/service/' + encodeURIComponent(input); 
     }
+
+    // Allow pressing "Enter" in the input box
+    document.getElementById('url-input').addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') loadUrl();
+    });
+
+    // --- 4. Eruda DevTools Injector ---
+    (function () {
+      if (!/eruda=true/.test(window.location.search) && localStorage.getItem('active-eruda') !== 'true') return;
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+      script.onload = function () { eruda.init(); };
+      document.head.appendChild(script);
+    })();
   </script>
-  <script>
-  // 1. Create an array to hold all our log lines
-  window.appLogs = [];
-
-  // Helper to add a timestamped log to our array
-  function captureLog(source, message) {
-    const timestamp = new Date().toISOString().split('T')[1].replace('Z', '');
-    window.appLogs.push(`[${timestamp}] [${source}] ${message}`);
-  }
-
-  // 2. Intercept messages from the Service Worker
-  navigator.serviceWorker.addEventListener('message', event => {
-    if (event.data && event.data.type === 'sw-log') {
-      captureLog('SW/Server', event.data.message);
-    }
-  });
-
-  // 3. (Optional) Hijack standard console.log to catch anything else
-  const originalConsoleLog = console.log;
-  console.log = function(...args) {
-    // Call the original so Eruda still sees it
-    originalConsoleLog.apply(console, args); 
-    
-    // Convert objects to strings and capture
-    const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
-    captureLog('Client', msg);
-  };
-</script>
 </body>
 </html>
