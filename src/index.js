@@ -198,17 +198,29 @@ export default {
 													Object.assign(window.WebSocket, OriginalWebSocket);
 
 													// 4. NEW: Eruda DevTools Injector
-													try {
-														const wantsEruda = window.location.search.includes('eruda=true') || 
-																		   (window.top && window.top.location.search.includes('eruda=true'));
-														
-														if (wantsEruda) {
-															const erudaScript = document.createElement('script');
-															erudaScript.src = "https://cdn.jsdelivr.net/npm/eruda";
-															erudaScript.onload = () => eruda.init();
-															document.documentElement.appendChild(erudaScript);
-														}
+													let wantsEruda = false;
+													
+													// Check current frame safely
+													try { 
+														if (window.location.search.includes('eruda=true')) wantsEruda = true; 
 													} catch(e) {}
+													
+													// Check top frame safely (isolate the try/catch so cross-origin errors don't crash us)
+													try { 
+														if (window.top && window.top.location.search.includes('eruda=true')) wantsEruda = true; 
+													} catch(e) {}
+													
+													if (wantsEruda) {
+														const erudaScript = document.createElement('script');
+														erudaScript.src = "https://cdn.jsdelivr.net/npm/eruda";
+														erudaScript.onload = () => {
+															eruda.init();
+															console.log("[Eruda] Injected successfully!");
+														};
+														
+														// Safely append to head or document element
+														(document.head || document.documentElement).appendChild(erudaScript);
+													}
 												})();
 											</script>`;
 											// Inject right after the <head> tag opens
