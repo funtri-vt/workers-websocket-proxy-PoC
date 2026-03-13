@@ -34,15 +34,12 @@ export default {
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();
 
-			// NEW: A helper to ensure we never write to a dead socket
+			// A helper to ensure we never write to a dead socket
 			const safeSend = (data) => {
-				// readyState 1 means OPEN
 				if (server.readyState === 1) {
 					try {
 						server.send(data);
-					} catch (e) {
-						// Socket closed mid-send, swallow the error
-					}
+					} catch (e) {}
 				}
 			};
 
@@ -75,7 +72,7 @@ export default {
 								fetchOptions.body = bytes;
 							}
 
-							// NEW: 1. Short-circuit CORS preflight requests (OPTIONS)
+							// 1. Short-circuit CORS preflight requests (OPTIONS)
 							if (msg.method.toUpperCase() === "OPTIONS") {
 								safeSend(JSON.stringify({ type: "info", message: `Auto-answering CORS preflight for: ${msg.url}` }));
 								safeSend(JSON.stringify({
@@ -91,7 +88,7 @@ export default {
 									targetDomain: new URL(msg.url).hostname
 								}));
 								safeSend(JSON.stringify({ type: "end" }));
-								return; // Stop processing this specific websocket message
+								return; 
 							}
 
 							const targetRequest = new Request(msg.url, fetchOptions);
@@ -118,13 +115,12 @@ export default {
 										} catch (e) {
 											headersOut[key] = value;
 										}
-									// Added content-security-policy-report-only to ensure NO csp makes it through
-									} else if (!["content-length", "content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "content-security-policy-report-only", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
+									} else if (!["content-length", "content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
 								});
 
-								// NEW: 2. Inject permissive CORS headers into all real responses
+								// 2. Inject permissive CORS headers into all real responses
 								headersOut["Access-Control-Allow-Origin"] = "*";
 								headersOut["Access-Control-Allow-Methods"] = "*";
 								headersOut["Access-Control-Allow-Headers"] = "*";
@@ -138,31 +134,18 @@ export default {
 									targetDomain: new URL(msg.url).hostname
 								}));
 
-								// NEW: Prepare the response for streaming
 								let streamResponse = res;
 
-								// NEW: Only rewrite if it is actually an HTML document
 								if (contentType.includes("text/html")) {
 									const targetDomain = new URL(msg.url).hostname;
-									const baseUrl = msg.url; // We need this to resolve relative links like href="/about"
-
-									// NEW: Dedicated Eruda Injector
-									class ErudaInjector {
-										element(element) {
-											element.append(
-												`<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-												 <script>eruda.init(); console.log('[Eruda] Force-injected!');</script>`, 
-												{ html: true }
-											);
-										}
-									}
+									const baseUrl = msg.url; 
 
 									class ScriptInjector {
 										element(element) {
 											const script = `
 											<script>
 												(function() {
-													// 1. Advanced Storage Spoofing (Passes strict engine type checks)
+													// 1. Advanced Storage Spoofing
 													const prefix = "${targetDomain}:";
 													const makeProxy = (real) => new Proxy(real, {
 														get(target, prop) {
@@ -175,7 +158,6 @@ export default {
 																	if (key && key.startsWith(prefix)) target.removeItem(key);
 																}
 															};
-															// Bind native functions to prevent 'Illegal invocation' errors
 															return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
 														}
 													});
@@ -183,21 +165,17 @@ export default {
 													try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
 													try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
 
-													
 													// 2. Fix Keyboard Focus / Event Listener Crashes
-													// Forces the game to attach keyboard events locally instead of throwing CORS errors
 													try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
 													try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
 													
-													// 3. NEW: WebSocket Interceptor
+													// 3. WebSocket Interceptor
 													const OriginalWebSocket = window.WebSocket;
 													window.WebSocket = function(url, protocols) {
-														// Ignore our own internal SW proxy websocket
 														if (typeof url === 'string' && url.includes('/ws/')) {
 															return new OriginalWebSocket(url, protocols);
 														}
 														
-														// Hijack game webosckets and route to Durable Object
 														console.log('[Interceptor] Hijacking WebSocket to:', url);
 														const targetUrl = encodeURIComponent(url);
 														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/durable-ws/?target=' + targetUrl;
@@ -205,47 +183,38 @@ export default {
 														return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
 													};
 													
-													// Copy over static properties so the game doesn't notice it's a fake class
 													window.WebSocket.prototype = OriginalWebSocket.prototype;
 													Object.assign(window.WebSocket, OriginalWebSocket);
 												})();
 											</script>`;
-											// Inject right after the <head> tag opens
 											element.prepend(script, { html: true });
 										}
 									}
-									//NEW: The link rewriter
+
 									class AttributeRewriter {
 										constructor(attributeName) {
 											this.attributeName = attributeName;
 										}
 										element(element) {
 											const attribute = element.getAttribute(this.attributeName);
-											// Ignore empty links, anchor links (#), and data URIs
 											if (attribute && !attribute.startsWith('data:') && !attribute.startsWith('#')) {
 												try {
 													const absoluteUrl = new URL(attribute, baseUrl).toString();
 													element.setAttribute(this.attributeName, "/service/" + encodeURIComponent(absoluteUrl));
-												} catch (e) {
-													// If URL parsing fails, leave it alone
-												}
+												} catch (e) {}
 											}
 										}
 									}
 
-									// Chain the rewriters together
 									streamResponse = new HTMLRewriter()
-										.on("head", new ErudaInjector())
 										.on("head", new ScriptInjector())
 										.on("a", new AttributeRewriter("href"))
 										.on("img", new AttributeRewriter("src"))
 										.on("link", new AttributeRewriter("href"))
 										.on("form", new AttributeRewriter("action"))
 										.transform(res);
+								}
 
-									}
-
-								// Stream the (potentially modified) body back to the client
 								if (streamResponse.body) {
 									const reader = streamResponse.body.getReader();
 									while (true) {
@@ -282,17 +251,15 @@ export default {
 		// Phase 3: Route to Durable Object WebSocket Proxy
 		// --------------------------------------------------------
 		if (url.pathname.startsWith("/durable-ws/")) {
-			// Create or get our single global router instance
 			const id = env.WSPROXY.idFromName("global-game-router");
 			const stub = env.WSPROXY.get(id);
-			
-			// Hand the request completely over to the Durable Object
 			return stub.fetch(request);
 		}
 
 		return new Response("Not Found", { status: 404 });
 	},
 };
+
 // --------------------------------------------------------
 // Persistent WebSocket Router (Durable Object)
 // --------------------------------------------------------
@@ -302,31 +269,25 @@ export class WebSocketProxy extends DurableObject {
 	}
 
 	async fetch(request) {
-		// 1. Get the target WebSocket URL
 		const url = new URL(request.url);
 		const targetUrlParam = url.searchParams.get("target");
 		if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
 		
 		const targetUrl = decodeURIComponent(targetUrlParam);
-
-		// 2. Grab Eaglercraft's special subprotocols from the browser's request
 		const requestedProtocols = request.headers.get("Sec-WebSocket-Protocol");
 		
-		// 3. Prepare headers for the real game server
 		const proxyHeaders = new Headers();
 		proxyHeaders.set("Upgrade", "websocket");
 		if (requestedProtocols) {
 			proxyHeaders.set("Sec-WebSocket-Protocol", requestedProtocols);
 		}
 		
-		// CRITICAL: spoof the Origin so game servers don't think we are a bot/scraper
 		try { 
 			proxyHeaders.set("Origin", new URL(targetUrl).origin); 
 		} catch(e) {}
 		
 		proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
 
-		// 4. Connect to the real game server 
 		const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
 
 		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
@@ -334,13 +295,10 @@ export class WebSocketProxy extends DurableObject {
 		}
 		
 		const targetSocket = targetResponse.webSocket;
-
-		// 5. Accept browser's socket
 		const { 0: clientSocket, 1: serverSocket } = new WebSocketPair();
 		serverSocket.accept();
 		targetSocket.accept();
 
-		// 6. Pipe binary data bidirectionally
 		serverSocket.addEventListener("message", event => targetSocket.send(event.data));
 		targetSocket.addEventListener("message", event => serverSocket.send(event.data));
 
@@ -354,7 +312,6 @@ export class WebSocketProxy extends DurableObject {
 		serverSocket.addEventListener("error", closeBoth);
 		targetSocket.addEventListener("error", closeBoth);
 
-		// 7. Reply to the browser with the exact subprotocol the server accepted
 		const responseHeaders = new Headers();
 		const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
 		if (acceptedProtocol) {
