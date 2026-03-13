@@ -175,6 +175,26 @@ export default {
 													// Forces the game to attach keyboard events locally instead of throwing CORS errors
 													try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
 													try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
+													
+													// 3. NEW: WebSocket Interceptor
+													const OriginalWebSocket = window.WebSocket;
+													window.WebSocket = function(url, protocols) {
+														// Ignore our own internal SW proxy websocket
+														if (typeof url === 'string' && url.includes('/ws/')) {
+															return new OriginalWebSocket(url, protocols);
+														}
+														
+														// Hijack game webosckets and route to Durable Object
+														console.log('[Interceptor] Hijacking WebSocket to:', url);
+														const targetUrl = encodeURIComponent(url);
+														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/durable-ws/?target=' + targetUrl;
+														
+														return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
+													};
+													
+													// Copy over static properties so the game doesn't notice it's a fake class
+													window.WebSocket.prototype = OriginalWebSocket.prototype;
+													Object.assign(window.WebSocket, OriginalWebSocket);
 												})();
 											</script>`;
 											// Inject right after the <head> tag opens
@@ -244,6 +264,18 @@ export default {
 			});
 		}
 
+		// --------------------------------------------------------
+		// Phase 3: Route to Durable Object WebSocket Proxy
+		// --------------------------------------------------------
+		if (url.pathname.startsWith("/durable-ws/")) {
+			// Create or get our single global router instance
+			const id = env.WSPROXY.idFromName("global-game-router");
+			const stub = env.WSPROXY.get(id);
+			
+			// Hand the request completely over to the Durable Object
+			return stub.fetch(request);
+		}
+
 		return new Response("Not Found", { status: 404 });
 	},
 };
@@ -256,8 +288,9 @@ export class WebSocketProxy extends DurableObject {
 	}
 
 	async fetch(request) {
-		// 1. Get the target WebSocket URL from the headers
-		const targetUrl = request.headers.get("X-Target-WS");
+		// 1. Get the target WebSocket URL from the query string (Browser WS can't set headers)
+		const url = new URL(request.url);
+		const targetUrl = url.searchParams.get("target");
 		if (!targetUrl) return new Response("Missing Target", { status: 400 });
 
 		// 2. Accept the incoming WebSocket from the user's browser
