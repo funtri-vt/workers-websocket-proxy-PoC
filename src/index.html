@@ -169,11 +169,8 @@
       if (!/eruda=true/.test(window.location.search) && localStorage.getItem('active-eruda') !== 'true') return;
       var script = document.createElement('script');
       
-      // Suggestion 2: Hardcode version and set up SRI. 
-      // You must generate the sha256 hash using srihash.org for the specific file you are loading.
-      script.src = 'https://cdn.jsdelivr.net/npm/eruda@3.0.1/eruda.min.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/eruda';
       script.crossOrigin = 'anonymous';
-      // script.integrity = 'sha256-PLACEHOLDER_HASH_GOES_HERE'; 
       
       script.onload = function () { 
         eruda.init(); 
