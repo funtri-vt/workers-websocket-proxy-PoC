@@ -283,7 +283,11 @@ export class WebSocketProxy extends DurableObject {
 		const targetUrlParam = url.searchParams.get("target");
 		if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
 		
-		const targetUrl = decodeURIComponent(targetUrlParam);
+		let targetUrl = decodeURIComponent(targetUrlParam);
+
+		// NEW: The Fetch API refuses ws:// schemes. Swap them to http/https.
+		// The "Upgrade: websocket" header we add later will handle the actual protocol switch.
+		targetUrl = targetUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
 		const requestedProtocols = request.headers.get("Sec-WebSocket-Protocol");
 		
 		const proxyHeaders = new Headers();
