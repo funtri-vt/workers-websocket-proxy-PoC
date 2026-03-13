@@ -118,7 +118,8 @@ export default {
 										} catch (e) {
 											headersOut[key] = value;
 										}
-									} else if (!["content-length", "content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
+									// Added content-security-policy-report-only to ensure NO csp makes it through
+									} else if (!["content-length", "content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "content-security-policy-report-only", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
 								});
@@ -144,6 +145,17 @@ export default {
 								if (contentType.includes("text/html")) {
 									const targetDomain = new URL(msg.url).hostname;
 									const baseUrl = msg.url; // We need this to resolve relative links like href="/about"
+
+									// NEW: Dedicated Eruda Injector
+									class ErudaInjector {
+										element(element) {
+											element.append(
+												`<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+												 <script>eruda.init(); console.log('[Eruda] Force-injected!');</script>`, 
+												{ html: true }
+											);
+										}
+									}
 
 									class ScriptInjector {
 										element(element) {
@@ -196,31 +208,6 @@ export default {
 													// Copy over static properties so the game doesn't notice it's a fake class
 													window.WebSocket.prototype = OriginalWebSocket.prototype;
 													Object.assign(window.WebSocket, OriginalWebSocket);
-
-													// 4. NEW: Eruda DevTools Injector
-													let wantsEruda = false;
-													
-													// Check current frame safely
-													try { 
-														if (window.location.search.includes('eruda=true')) wantsEruda = true; 
-													} catch(e) {}
-													
-													// Check top frame safely (isolate the try/catch so cross-origin errors don't crash us)
-													try { 
-														if (window.top && window.top.location.search.includes('eruda=true')) wantsEruda = true; 
-													} catch(e) {}
-													
-													if (wantsEruda) {
-														const erudaScript = document.createElement('script');
-														erudaScript.src = "https://cdn.jsdelivr.net/npm/eruda";
-														erudaScript.onload = () => {
-															eruda.init();
-															console.log("[Eruda] Injected successfully!");
-														};
-														
-														// Safely append to head or document element
-														(document.head || document.documentElement).appendChild(erudaScript);
-													}
 												})();
 											</script>`;
 											// Inject right after the <head> tag opens
@@ -248,6 +235,7 @@ export default {
 
 									// Chain the rewriters together
 									streamResponse = new HTMLRewriter()
+										.on("head", new ErudaInjector())
 										.on("head", new ScriptInjector())
 										.on("a", new AttributeRewriter("href"))
 										.on("img", new AttributeRewriter("src"))
