@@ -71,49 +71,46 @@ self.addEventListener('fetch', event => {
 async function handleProxyRequest(request, url) {
   let targetUrl = url.pathname + url.search;
   
-  targetUrl = targetUrl.replace(/&amp;/g, '&');
-
-  // A much safer way to check if this is a top-level page load
   const isDocument = request.destination === 'document' || request.destination === 'iframe';
 
-  // 1. Handle explicit proxy requests (Prefix: /service/)
   if (targetUrl.startsWith('/service/')) {
+    // 1. Decode the URL FIRST
     let innerUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
     
+    // 2. NOW safely rip out those annoying HTML entities
+    innerUrl = innerUrl.replace(/&amp;/g, '&');
+    
     if (!/^https?:\/\//i.test(innerUrl)) {
-      // No protocol. Is this a typed domain ("wikipedia.org") or a relative URL ("portal/img.png")?
       const referer = request.referrer;
-      
-      // If it's a subresource with a proxy referer, treat it as a rewritten relative URL!
       if (referer && referer.includes('/service/') && !isDocument) {
         try {
           const refUrl = new URL(referer);
           let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
-          if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
+          // Also clean the base target just in case
+          baseTarget = baseTarget.replace(/&amp;/g, '&'); 
           
+          if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
           targetUrl = new URL(innerUrl, baseTarget).toString();
         } catch(e) {
           targetUrl = 'https://' + innerUrl;
         }
       } else {
-        // Top-level navigation: assume it's a domain typed by the user
         targetUrl = 'https://' + innerUrl;
       }
     } else {
       targetUrl = innerUrl;
     }
     
-    // Lock origin ONLY on actual HTML documents/iframes
     if (isDocument) {
       try { 
           activeProxyOrigin = new URL(targetUrl).origin; 
-          remoteLog(`[SW] Document Load! ActiveOrigin locked to: ${activeProxyOrigin}`);
       } catch(e) {}
     }
   } 
-  
-  // 2. Handle paths that bypassed the rewriter completely (e.g., /w/load.php)
   else {
+    // Also clean URLs that bypassed the rewriter
+    targetUrl = targetUrl.replace(/&amp;/g, '&');
+    
     if (!/^https?:\/\//i.test(targetUrl)) {
       const referer = request.referrer;
       let resolved = false;
@@ -122,6 +119,7 @@ async function handleProxyRequest(request, url) {
         try {
           const refUrl = new URL(referer);
           let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
+          baseTarget = baseTarget.replace(/&amp;/g, '&');
           if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
           
           targetUrl = new URL(targetUrl, baseTarget).toString();
@@ -130,11 +128,8 @@ async function handleProxyRequest(request, url) {
       } 
       
       if (!resolved) {
-        try {
-          targetUrl = new URL(targetUrl, activeProxyOrigin).toString();
-        } catch(e) {
-          targetUrl = 'https://' + targetUrl.replace(/^\//, ''); 
-        }
+        try { targetUrl = new URL(targetUrl, activeProxyOrigin).toString(); } 
+        catch(e) { targetUrl = 'https://' + targetUrl.replace(/^\//, ''); }
       }
     }
   }
