@@ -51,16 +51,9 @@
 <script>
   ;(function () {
     var src = '//cdn.jsdelivr.net/npm/eruda';
-    if (!/eruda=true/.test(window.location.search) && localStorage.getItem('active-eruda') !== 'true') return;
-    
-    console.log('[Client] Injecting Eruda DevTools...');
-    var script = document.createElement('script');
-    script.src = src;
-    script.onload = function () { 
-      eruda.init(); 
-      console.log('[Client] Eruda initialized successfully.');
-    };
-    document.head.appendChild(script);
+    if (!/eruda=true/.test(window.location) && localStorage.getItem('active-eruda') != 'true') return;
+    document.write('<scr' + 'ipt src="' + src + '"></scr' + 'ipt>');
+    document.write('<scr' + 'ipt>eruda.init();</scr' + 'ipt>');
   })();
   </script>
   <script>
