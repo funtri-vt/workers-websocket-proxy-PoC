@@ -302,7 +302,24 @@ export class WebSocketProxy extends DurableObject {
 		
 		proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
 
+
+		// NEW: Log the exact URL and headers we are sending
+		console.log(`[DO] Attempting WebSocket handshake with: ${targetUrl}`);
+		console.log(`[DO] Sending Origin: ${proxyHeaders.get("Origin")}`);
+		console.log(`[DO] Sending Protocols: ${proxyHeaders.get("Sec-WebSocket-Protocol")}`);
+
+		
 		const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
+
+		// NEW: Catch the exact response status
+		console.log(`[DO] Target responded with HTTP Status: ${targetResponse.status}`);
+		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
+			// NEW: If it fails, log the headers so we know WHY it rejected us
+			console.log(`[DO] Handshake failed! Target headers:`, JSON.stringify(Object.fromEntries(targetResponse.headers)));
+			return new Response("Backend refused connection", { status: 502 });
+		}
+		
+		console.log(`[DO] Handshake 101 Success! Linking sockets...`);
 
 		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
 			return new Response("Backend refused connection", { status: 502 });
