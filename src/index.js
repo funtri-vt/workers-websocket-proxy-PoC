@@ -206,12 +206,22 @@ export default {
 										}
 									}
 
+									// NEW: Strip security hashes so the browser accepts our proxied files
+									class SecurityStripper {
+										element(element) {
+											element.removeAttribute("integrity");
+											element.removeAttribute("nonce");
+										}
+									}
+
 									streamResponse = new HTMLRewriter()
 										.on("head", new ScriptInjector())
 										.on("a", new AttributeRewriter("href"))
 										.on("img", new AttributeRewriter("src"))
 										.on("link", new AttributeRewriter("href"))
 										.on("form", new AttributeRewriter("action"))
+										.on("script", new AttributeRewriter("src")) // Catch JS files!
+										.on("script, link", new SecurityStripper()) // Strip integrity hashes
 										.transform(res);
 								}
 
