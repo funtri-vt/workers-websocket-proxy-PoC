@@ -173,8 +173,8 @@ export default {
 
 													// 4. NEW: Eruda DevTools Injector
 													try {
-														const wantsEruda = window.location.search.includes('eruda=true') || 
-																		   (window.top && window.top.location.search.includes('eruda=true'));
+														const wantsEruda = true;//window.location.search.includes('eruda=true') || 
+																		   //(window.top && window.top.location.search.includes('eruda=true'));
 														
 														if (wantsEruda) {
 															const erudaScript = document.createElement('script');
