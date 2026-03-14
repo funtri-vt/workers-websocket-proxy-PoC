@@ -5,7 +5,7 @@ This project is an advanced, serverless web proxy built entirely on Cloudflare W
 
 Unlike traditional HTTP proxies, this architecture relies on a Service Worker to hijack native browser requests and a Cloudflare Durable Object to maintain persistent, long-lived TCP connections for multiplayer browser games (like Eaglercraft).
 
-## WARNING: DO NOT RELY ON THIS PROJECT OR USE IT IN PRODUCTION. THIS IS A PoC!!!!!!!!!!!
+## WARNING: DO <u>NOT</u> RELY ON THIS PROJECT OR USE IT IN PRODUCTION. THIS IS A PoC!!!!!!!!!!!
 
 ---
 
