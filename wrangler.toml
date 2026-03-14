@@ -10,3 +10,7 @@ globs = ["**/*.html", "**/sw.js"]
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["WebSocketProxy"]
