@@ -185,7 +185,43 @@
         proxyLog('System', 'Eruda DevTools injected successfully.');
       };
       document.head.appendChild(script);
-    })();
+      // --- 4. Eruda DevTools Injector (Iframe Targeted) ---
+      (function () {
+        // Check if ?debug=true is in the main website's URL
+        const isDebugMode = window.location.search.includes('debug=true');
+        if (!isDebugMode) return;
+        
+        const frame = document.getElementById('frame');
+        
+        // We need to inject Eruda every time the iframe loads a new page
+        frame.addEventListener('load', () => {
+          try {
+            const frameDoc = frame.contentDocument || frame.contentWindow.document;
+            if (!frameDoc) return;
+          
+            // Prevent injecting multiple times if the iframe reloads partially
+            if (frameDoc.getElementById('eruda-injector')) return;
+          
+            proxyLog('System', 'Injecting Eruda into iframe...');
+          
+            const script = frameDoc.createElement('script');
+            script.id = 'eruda-injector';
+            script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+            script.crossOrigin = 'anonymous';
+            
+            script.onload = function () { 
+              // Initialize Eruda inside the iframe's window context
+              frame.contentWindow.eruda.init(); 
+              proxyLog('System', 'Eruda DevTools successfully attached to iframe.');
+            };
+            
+            frameDoc.head.appendChild(script);
+          } catch (err) {
+            proxyLog('System Error', `Failed to inject Eruda into iframe: ${err.message}`);
+          }
+        });
+      })();
+      })();
   </script>
 </body>
 </html>
