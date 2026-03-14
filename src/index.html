@@ -116,7 +116,12 @@
     <button class="btn-logs" id="downloadLogsBtn">💾 Get Logs</button>
   </div>
   
-  <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="pointer-lock; keyboard-map; fullscreen" tabindex="0" id="frame"></iframe>
+  <iframe style="background-color: #121212; color-scheme: dark;"
+  srcdoc="<html style='background-color: #121212; color-scheme: dark;'></html>"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+  allow="pointer-lock; keyboard-map; fullscreen"
+  tabindex="0"
+  id="frame"></iframe>
 
   <script>
     // --- 1. Logging Engine ---
