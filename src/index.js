@@ -2,6 +2,8 @@
  * @typedef {Object} Env
  */
 
+import { Buffer } from "node:buffer";
+
 import indexHtml from "./index.html";
 import swJs from "./sw.js";
 
@@ -72,13 +74,13 @@ export default {
 							};
 
 							if (msg.body) {
-								try {
-									const binaryString = atob(msg.body);
-									fetchOptions.body = Uint8Array.from(binaryString, c => c.charCodeAt(0));
-								} catch (e) {
-									safeSend(JSON.stringify({ type: "error", message: "Failed to decode request body." }));
-									return;
-								}
+  							try {
+ 							   // This executes entirely in C++, consuming virtually zero JS CPU time.
+ 							   fetchOptions.body = Buffer.from(msg.body, "base64");
+ 							} catch (e) {
+   							 	safeSend(JSON.stringify({ type: "error", message: "Failed to decode request body." }));
+    							return;
+							  }
 							}
 
 							if (msg.method.toUpperCase() === "OPTIONS") {
@@ -228,12 +230,30 @@ export default {
 								}
 
 								if (streamResponse.body) {
-									const reader = streamResponse.body.getReader();
-									while (true) {
-										const { done, value } = await reader.read();
-										if (done) break;
-										safeSend(value); 
-									}
+  									const reader = streamResponse.body.getReader();
+  									try {
+  									  while (true) {
+  									    // 1. Check if the client disconnected before reading the next chunk
+  									    if (server.readyState !== 1) {
+  									      await reader.cancel("Client disconnected");
+  									      break;
+  									    }
+									
+  									    const { done, value } = await reader.read();
+  									    if (done) break;
+									
+  									    // 2. Try to send, and instantly kill the download if the socket buffer throws
+  									    try {
+  									      server.send(value);
+  									    } catch (err) {
+  									      await reader.cancel("Socket send failed");
+  									      break;
+  									    }
+  									  }
+  									} finally {
+  									  // 3. Always release the lock so memory can be garbage collected
+  									  reader.releaseLock();
+  									}
 								}
 								
 								safeSend(JSON.stringify({ type: "end" }));
