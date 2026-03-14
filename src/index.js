@@ -2,13 +2,11 @@
  * @typedef {Object} Env
  */
 
-import { DurableObject } from "cloudflare:workers";
-
 import indexHtml from "./index.html";
 import swJs from "./sw.js";
 
 // --------------------------------------------------------
-// The Cloudflare Worker Backend
+// The Cloudflare Worker Backend (Stateless & Free)
 // --------------------------------------------------------
 export default {
 	async fetch(request, env, ctx) {
@@ -26,14 +24,15 @@ export default {
 			});
 		}
 
+		// --------------------------------------------------------
+		// Phase 1: Service Worker to Backend Bridge
+		// --------------------------------------------------------
 		if (url.pathname === "/ws/") {
 			if (request.headers.get("Upgrade") !== "websocket") {
 				return new Response("Expected WebSocket", { status: 426 });
 			}
 
-			// --- SECURITY FIX 1: Origin Lock-down ---
-			// Ensures only your frontend can connect to this proxy WebSocket.
-			// Blocks random people who discover your Worker URL from abusing it.
+			// Origin Lock-down
 			const expectedOrigin = url.origin;
 			const clientOrigin = request.headers.get("Origin");
 			if (clientOrigin && clientOrigin !== expectedOrigin) {
@@ -44,7 +43,6 @@ export default {
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();
 
-			// A helper to ensure we never write to a dead socket
 			const safeSend = (data) => {
 				if (server.readyState === 1) {
 					try {
@@ -74,9 +72,6 @@ export default {
 							};
 
 							if (msg.body) {
-								// --- SECURITY FIX 3: Efficient Base64 Decoding ---
-								// Replaced the CPU-heavy manual loop with optimized built-in parsing
-								// to prevent Cloudflare from killing the Worker due to CPU limits.
 								try {
 									const binaryString = atob(msg.body);
 									fetchOptions.body = Uint8Array.from(binaryString, c => c.charCodeAt(0));
@@ -86,7 +81,6 @@ export default {
 								}
 							}
 
-							// 1. Short-circuit CORS preflight requests (OPTIONS)
 							if (msg.method.toUpperCase() === "OPTIONS") {
 								safeSend(JSON.stringify({
 									type: "response",
@@ -130,7 +124,6 @@ export default {
 									}
 								});
 
-								// 2. Inject permissive CORS headers into all real responses
 								headersOut["Access-Control-Allow-Origin"] = "*";
 								headersOut["Access-Control-Allow-Methods"] = "*";
 								headersOut["Access-Control-Allow-Headers"] = "*";
@@ -179,7 +172,7 @@ export default {
 													try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
 													try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
 													
-													// 3. WebSocket Interceptor
+													// 3. Stateless WebSocket Interceptor
 													const OriginalWebSocket = window.WebSocket;
 													window.WebSocket = function(url, protocols) {
 														if (typeof url === 'string' && url.includes('/ws/')) {
@@ -187,7 +180,8 @@ export default {
 														}
 														
 														const targetUrl = encodeURIComponent(url);
-														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/durable-ws/?target=' + targetUrl;
+														// UPDATED: Now points to the native Worker proxy route
+														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/proxy-ws/?target=' + targetUrl;
 														
 														return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
 													};
@@ -266,91 +260,71 @@ export default {
 		}
 
 		// --------------------------------------------------------
-		// Phase 3: Route to Durable Object WebSocket Proxy
+		// Phase 2: Native Stateless WebSocket Proxy
 		// --------------------------------------------------------
-		if (url.pathname.startsWith("/durable-ws/")) {
-			const id = env.WSPROXY.idFromName("global-game-router");
-			const stub = env.WSPROXY.get(id);
-			return stub.fetch(request);
+		if (url.pathname.startsWith("/proxy-ws/")) {
+			const targetUrlParam = url.searchParams.get("target");
+			if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
+			
+			let targetUrl = decodeURIComponent(targetUrlParam);
+
+			targetUrl = targetUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
+			const requestedProtocols = request.headers.get("Sec-WebSocket-Protocol");
+			
+			const proxyHeaders = new Headers();
+			proxyHeaders.set("Upgrade", "websocket");
+			if (requestedProtocols) {
+				proxyHeaders.set("Sec-WebSocket-Protocol", requestedProtocols);
+			}
+			
+			try { 
+				proxyHeaders.set("Origin", new URL(targetUrl).origin); 
+			} catch(e) {}
+			
+			proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
+
+			const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
+
+			if (targetResponse.status !== 101 || !targetResponse.webSocket) {
+				return new Response("Backend refused connection", { status: 502 });
+			}
+			
+			const targetSocket = targetResponse.webSocket;
+			const { 0: clientSocket, 1: serverSocket } = new WebSocketPair();
+			serverSocket.accept();
+			targetSocket.accept();
+			
+			serverSocket.addEventListener("message", event => {
+				targetSocket.send(event.data);
+			});
+			
+			targetSocket.addEventListener("message", event => {
+				serverSocket.send(event.data);
+			});
+
+			const closeBoth = () => {
+				try { serverSocket.close(); } catch(e){}
+				try { targetSocket.close(); } catch(e){}
+			};
+			
+			serverSocket.addEventListener("close", closeBoth);
+			targetSocket.addEventListener("close", closeBoth);
+			serverSocket.addEventListener("error", closeBoth);
+			targetSocket.addEventListener("error", closeBoth);
+
+			const responseHeaders = new Headers();
+			const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
+			if (acceptedProtocol) {
+				responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
+			}
+
+			return new Response(null, {
+				status: 101,
+				webSocket: clientSocket,
+				headers: responseHeaders
+			});
 		}
 
 		return new Response("Not Found", { status: 404 });
 	},
 };
-
-// --------------------------------------------------------
-// Persistent WebSocket Router (Durable Object)
-// --------------------------------------------------------
-export class WebSocketProxy extends DurableObject {
-	constructor(ctx, env) {
-		super(ctx, env);
-	}
-
-	async fetch(request) {
-		const url = new URL(request.url);
-		const targetUrlParam = url.searchParams.get("target");
-		if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
-		
-		let targetUrl = decodeURIComponent(targetUrlParam);
-
-		targetUrl = targetUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
-		const requestedProtocols = request.headers.get("Sec-WebSocket-Protocol");
-		
-		const proxyHeaders = new Headers();
-		proxyHeaders.set("Upgrade", "websocket");
-		if (requestedProtocols) {
-			proxyHeaders.set("Sec-WebSocket-Protocol", requestedProtocols);
-		}
-		
-		try { 
-			proxyHeaders.set("Origin", new URL(targetUrl).origin); 
-		} catch(e) {}
-		
-		proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
-
-		const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
-
-		if (targetResponse.status !== 101 || !targetResponse.webSocket) {
-			return new Response("Backend refused connection", { status: 502 });
-		}
-		
-		const targetSocket = targetResponse.webSocket;
-		const { 0: clientSocket, 1: serverSocket } = new WebSocketPair();
-		serverSocket.accept();
-		targetSocket.accept();
-
-		// --- SECURITY FIX 2: Privacy / Logging Removal ---
-		// Removed the invasive `logPacket` function that was capturing plain-text credentials and private data.
-		// Now it just blindly pipes the data back and forth securely.
-		
-		serverSocket.addEventListener("message", event => {
-			targetSocket.send(event.data);
-		});
-		
-		targetSocket.addEventListener("message", event => {
-			serverSocket.send(event.data);
-		});
-
-		const closeBoth = () => {
-			try { serverSocket.close(); } catch(e){}
-			try { targetSocket.close(); } catch(e){}
-		};
-		
-		serverSocket.addEventListener("close", closeBoth);
-		targetSocket.addEventListener("close", closeBoth);
-		serverSocket.addEventListener("error", closeBoth);
-		targetSocket.addEventListener("error", closeBoth);
-
-		const responseHeaders = new Headers();
-		const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
-		if (acceptedProtocol) {
-			responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
-		}
-
-		return new Response(null, {
-			status: 101,
-			webSocket: clientSocket,
-			headers: responseHeaders
-		});
-	}
-}
