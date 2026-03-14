@@ -230,30 +230,44 @@ export default {
 								}
 
 								if (streamResponse.body) {
-  									const reader = streamResponse.body.getReader();
-  									try {
-  									  while (true) {
-  									    // 1. Check if the client disconnected before reading the next chunk
-  									    if (server.readyState !== 1) {
-  									      await reader.cancel("Client disconnected");
-  									      break;
-  									    }
-									
-  									    const { done, value } = await reader.read();
-  									    if (done) break;
-									
-  									    // 2. Try to send, and instantly kill the download if the socket buffer throws
-  									    try {
-  									      server.send(value);
-  									    } catch (err) {
-  									      await reader.cancel("Socket send failed");
-  									      break;
-  									    }
-  									  }
-  									} finally {
-  									  // 3. Always release the lock so memory can be garbage collected
-  									  reader.releaseLock();
-  									}
+									const reader = streamResponse.body.getReader();
+									try {
+										while (true) {
+											// 1. Check if client disconnected
+											if (server.readyState !== 1) {
+												await reader.cancel("Client disconnected");
+												break;
+											}
+
+											// --- SECURITY/STABILITY FIX: BACKPRESSURE ---
+											// If the WebSocket has more than 1MB of unsent data waiting,
+											// pause the loop for 10ms to let the client's internet catch up.
+											// This completely prevents Out-Of-Memory (OOM) crashes.
+											while (server.bufferedAmount > 1024 * 1024) {
+												await new Promise(resolve => setTimeout(resolve, 10));
+												if (server.readyState !== 1) break;
+											}
+											
+											if (server.readyState !== 1) {
+												await reader.cancel("Client disconnected during backpressure");
+												break;
+											}
+
+											// 2. Read the next chunk from the target server
+											const { done, value } = await reader.read();
+											if (done) break;
+
+											// 3. Send over WebSocket
+											try {
+												server.send(value);
+											} catch (err) {
+												await reader.cancel("Socket send failed");
+												break;
+											}
+										}
+									} finally {
+										reader.releaseLock();
+									}
 								}
 								
 								safeSend(JSON.stringify({ type: "end" }));
