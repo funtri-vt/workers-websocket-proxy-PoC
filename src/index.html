@@ -8,6 +8,8 @@
     default-src 'self'; 
     script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; 
     style-src 'self' 'unsafe-inline'; 
+    img-src 'self' data:;
+    font-src 'self' data:;
     connect-src 'self' ws: wss: https:;
     frame-src 'self';
   ">
