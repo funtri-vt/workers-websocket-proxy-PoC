@@ -317,7 +317,13 @@ export default {
 			
 			proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
 
-			const targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
+			let targetResponse;
+			try {
+				targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
+			} catch (fetchErr) {
+				// If the target server drops the connection, catch the error and return a safe 502 Bad Gateway
+				return new Response(`WebSocket upstream fetch failed: ${fetchErr.message}`, { status: 502 });
+			}
 
 			if (targetResponse.status !== 101 || !targetResponse.webSocket) {
 				return new Response("Backend refused connection", { status: 502 });
