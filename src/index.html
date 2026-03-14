@@ -169,6 +169,8 @@
       if (!input) return;
       const frame = document.getElementById('frame');
       proxyLog('Client', `Routing to: ${input}`);
+      // Nuke the srcdoc so the browser respects our new src URL
+      frame.removeAttribute('srcdoc');
       frame.src = '/service/' + encodeURIComponent(input); 
     }
 
