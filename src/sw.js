@@ -91,42 +91,37 @@ function remoteLog(msg) {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  
-  // 1. Let the proxy's own UI and WebSockets pass through normally
+  const referrer = event.request.referrer;
+  const isProxied = referrer && referrer.includes('/service/');
+
+  // 1. The Detective (MUST come first)
+  // Catch requests that escaped the /service/ prefix
+  if (!url.pathname.startsWith('/service/') && isProxied) {
+    try {
+      const refUrl = new URL(referrer);
+      // Extract the target site we were currently on
+      const originalTarget = decodeURIComponent(refUrl.pathname.substring(refUrl.pathname.indexOf('/service/') + 9));
+      const baseDomain = new URL(originalTarget).origin;
+      
+      // Stitch it together: base + /path + ?query
+      const targetUrlStr = baseDomain + url.pathname + url.search;
+      const proxyUrl = new URL(url.origin + '/service/' + encodeURIComponent(targetUrlStr));
+      
+      console.log(`[SW Detective] Intercepted Escape: ${url.pathname} -> ${targetUrlStr}`);
+      return event.respondWith(handleProxyRequest(event.request, proxyUrl));
+    } catch (e) {
+      console.error("[SW Detective] Failed to redirect escape:", e);
+    }
+  }
+
+  // 2. System Bypass
+  // Only let the UI/WS through if they AREN'T part of a proxy session
   if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/')) {
     return; 
   }
 
-  let proxyUrl = url;
-
-  // 2. The Detective: Catching Escaped Absolute Paths!
-  if (!url.pathname.startsWith('/service/')) {
-    const referrer = event.request.referrer;
-    
-    // If the request came from inside our proxy...
-    if (referrer && referrer.includes('/service/')) {
-      try {
-        const refUrl = new URL(referrer);
-        const originalTarget = decodeURIComponent(refUrl.pathname.substring(9)); 
-        const baseDomain = new URL(originalTarget).origin; 
-        
-        // Stitch the escaped path back onto the correct target domain
-        const targetUrlStr = baseDomain + url.pathname + url.search;
-        
-        // Repackage it into a proper /service/ URL so your existing handler understands it!
-        proxyUrl = new URL(url.origin + '/service/' + encodeURIComponent(targetUrlStr));
-        
-        console.log(`[SW Detective] Caught escaped path: ${url.pathname} -> Repackaged to: ${targetUrlStr}`);
-      } catch (e) {
-        return; // Failed to parse, let the browser handle it
-      }
-    } else {
-      return; // Not a proxied request, let it go
-    }
-  }
-
-  // 3. Hand it off to your existing proxy logic!
-  event.respondWith(handleProxyRequest(event.request, proxyUrl));
+  // 3. Normal Proxy Flow
+  event.respondWith(handleProxyRequest(event.request, url));
 });
 
 async function handleProxyRequest(request, url) {
