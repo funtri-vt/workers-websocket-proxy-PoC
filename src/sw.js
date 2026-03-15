@@ -30,8 +30,19 @@ const dbPromise = new Promise((resolve, reject) => {
   request.onerror = () => reject('IDB Error');
 });
 
-// A fallback origin in case requests are missing referers
+// Stores origin per browser tab: { "client-id": "https://wikipedia.org" }
+let clientOrigins = new Map(); 
+
+// ADD THIS LINE BACK:
 let activeProxyOrigin = 'https://wikipedia.org'; 
+
+// Helper to get the origin for a specific request
+function getBaseOrigin(event) {
+  if (event.clientId && clientOrigins.has(event.clientId)) {
+    return clientOrigins.get(event.clientId);
+  }
+  return activeProxyOrigin; 
+}
 
 // --- SECURITY FIX 1: HTML Sanitizer Helper ---
 const escapeHTML = (str) => {
@@ -92,48 +103,44 @@ function remoteLog(msg) {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   const referrer = event.request.referrer;
-  const isProxied = referrer && referrer.includes('/service/');
+  const dest = event.request.destination;
 
-  // 1. The Detective (MUST come first)
-  // This catches requests that try to hit your root domain instead of the /service/ path
-  const isEscape = !url.pathname.startsWith('/service/') && 
-                   !url.pathname.startsWith('/ws/') && 
-                   url.pathname !== '/sw.js' && 
-                   !(url.pathname === '/' && url.search === '');
+  // Identify assets that "leaked" (trying to hit root domain instead of /service/)
+  // We check if it's an asset (image/script/css) OR if the referrer is already in the tunnel
+  const isProxiedReferrer = referrer && referrer.includes('/service/');
+  const isLeakedAsset = !url.pathname.startsWith('/service/') && 
+                        !url.pathname.startsWith('/ws/') && 
+                        url.pathname !== '/sw.js' &&
+                        (isProxiedReferrer || ['image', 'script', 'style', 'font', 'manifest'].includes(dest));
 
-  
-  // Add a check for the Referer to be extra safe
-  const isReferrerProxied = referrer && referrer.includes('/service/');
-  if (isEscape && (isProxied || activeProxyOrigin)) {
+  const currentOrigin = getBaseOrigin(event);
+  if (isLeakedAsset && currentOrigin) {
     try {
-      let baseDomain = activeProxyOrigin;
+      let baseDomain = currentOrigin;
       
-      if (isProxied) {
+      if (isProxiedReferrer) {
         const refUrl = new URL(referrer);
         const path = refUrl.pathname;
         const serviceIdx = path.indexOf('/service/');
-        // Extract the target site from the referrer URL
         const rawTarget = path.substring(serviceIdx + 9);
         baseDomain = new URL(decodeURIComponent(rawTarget)).origin;
       }
 
-      // Reconstruct the intended URL and force it back into the /service/ tunnel
       const targetUrlStr = baseDomain + url.pathname + url.search;
       const proxyUrl = new URL(url.origin + '/service/' + encodeURIComponent(targetUrlStr));
       
-      console.log(`[SW Detective] Re-routing Escape: ${url.pathname} -> ${targetUrlStr}`);
+      console.log(`[SW Detective] Re-routing ${dest || 'asset'}: ${url.pathname} -> ${targetUrlStr}`);
       return event.respondWith(handleProxyRequest(event.request, proxyUrl));
     } catch (e) {
       console.warn("[SW Detective] Resolution failed, falling through...");
     }
   }
 
-  // 2. System Bypass
+  // System Bypass (unchanged)
   if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/')) {
     return; 
   }
 
-  // 3. Normal Proxy Flow
   event.respondWith(handleProxyRequest(event.request, url));
 });
 
@@ -184,16 +191,18 @@ async function handleProxyRequest(request, url) {
       } 
       
       if (!resolved) {
-        try { targetUrl = new URL(targetUrl, activeProxyOrigin).toString(); } 
+        try { targetUrl = new URL(targetUrl, getBaseOrigin(event)).toString(); } 
         catch(e) { targetUrl = 'https://' + targetUrl.replace(/^\//, ''); }
       }
     }
   }
-  if (isDocument) {
-      try { 
-          activeProxyOrigin = new URL(targetUrl).origin; 
-      } catch(e) {}
-    }
+  if (isDocument && event.clientId) {
+    try { 
+      const newOrigin = new URL(targetUrl).origin;
+      clientOrigins.set(event.clientId, newOrigin);
+      activeProxyOrigin = newOrigin; // Still keep global as a backup
+    } catch(e) {}
+  }
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
 
   // --- SECURITY FIX 3: Hostname-specific Ad Blocking ---
@@ -292,9 +301,11 @@ async function handleProxyRequest(request, url) {
 
             if (buffer.byteLength > 0) {
               const bytes = new Uint8Array(buffer);
-              let binary = '';
-              for (let i = 0; i < bytes.byteLength; i++) {
-                binary += String.fromCharCode(bytes[i]);
+              // Use a more performant way to convert chunks if payload is large
+              let binary = "";
+              const chunksize = 0xFFFF;
+              for (let i = 0; i < bytes.length; i += chunksize) {
+                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunksize));
               }
               encodedBody = btoa(binary);
             }
@@ -327,17 +338,21 @@ async function handleProxyRequest(request, url) {
 
             // --- SECURITY FIX 4: Prevent Cross-Origin Cookie Forgery ---
             if (msg.setCookies && msg.setCookies.length > 0 && msg.targetDomain) {
-               try {
-                 const expectedDomain = new URL(targetUrl).hostname;
-                 // Ensure the requested cookie domain is a substring of the actual target URL
-                 // e.g., msg.targetDomain ".google.com" is valid for "accounts.google.com"
-                 if (expectedDomain.endsWith(msg.targetDomain.replace(/^\./, ''))) {
-                   saveCookies(msg.targetDomain, msg.setCookies);
-                   remoteLog(`[SW] Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
-                 } else {
-                   remoteLog(`[SW] ⚠️ Blocked cross-origin cookie set attempt for ${msg.targetDomain}`);
-                 }
-               } catch(e) {}
+              try {
+                const expectedDomain = new URL(targetUrl).hostname;
+                const cookieDomain = msg.targetDomain.replace(/^\./, '');
+
+                // VALIDATION: Must have at least one dot (not a TLD) 
+                // AND must be a suffix of the actual site we are visiting
+                const isSafeDomain = cookieDomain.includes('.') && expectedDomain.endsWith(cookieDomain);
+              
+                if (isSafeDomain) {
+                  saveCookies(msg.targetDomain, msg.setCookies);
+                  remoteLog(`[SW] Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
+                } else {
+                  remoteLog(`[SW] ⚠️ Blocked suspicious cookie domain: ${msg.targetDomain}`);
+                }
+              } catch(e) {}
             }
 
             headersResolved = true;

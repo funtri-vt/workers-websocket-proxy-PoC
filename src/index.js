@@ -150,16 +150,31 @@ export default {
 									const targetDomain = new URL(msg.url).hostname;
 									const baseUrl = msg.url; 
 
+
+									// Quick Sanity Check
+    								try {
+    								    new URL(baseUrl);
+    								} catch (e) {
+    								    safeSend(JSON.stringify({ type: "error", message: "Invalid Target URL" }));
+    								    return;
+    								}
+
 									class ScriptInjector {
 									  element(element) {
+										const configObj = {
+      										targetDomain: new URL(baseUrl).hostname,
+										    targetBase: baseUrl,
+										    targetOrigin: new URL(baseUrl).origin
+    									};
 									    const script = `
 									    <script>
 									      (function() {
-									        // --- 0. Configuration ---
-									        const prefix = "${targetDomain}:";
+									        // --- 0. Configuration (Injected Safely via JSON) ---
+        									const config = ${JSON.stringify(configObj)};
+    									    const prefix = config.targetDomain + ":";
 									        const PROXY_BASE = window.location.origin + '/service/';
-									        const TARGET_BASE = "${baseUrl}";
-									        const TARGET_ORIGIN = new URL(TARGET_BASE).origin;
+									        const TARGET_BASE = config.targetBase;
+									        const TARGET_ORIGIN = config.targetOrigin;
 									
 									        // URL Traffic Controller: The brain of the proxy
 									        function resolveUrl(url) {
@@ -302,22 +317,43 @@ export default {
 										}
 									}
 
-									const rawHtml = await res.text();
-									const dummyRes = new Response(rawHtml, { headers: res.headers });
-
-									const rewrittenRes = new HTMLRewriter()
-										.on("head", new ScriptInjector())
-										.on("a", new AttributeRewriter("href"))
-										.on("img", new AttributeRewriter("src"))
-										.on("link", new AttributeRewriter("href"))
-										.on("form", new AttributeRewriter("action"))
-										.on("script", new AttributeRewriter("src"))
-										.on("script, link", new SecurityStripper()) 
-										.transform(dummyRes);
-
-									const finalHtml = await rewrittenRes.text();
-									const binaryHtml = new TextEncoder().encode(finalHtml);
-									safeSend(binaryHtml);
+									// Stream directly from the live response! No buffering needed.
+								const rewrittenRes = new HTMLRewriter()
+								    .on("head", new ScriptInjector())
+								    .on("a", new AttributeRewriter("href"))
+								    .on("img", new AttributeRewriter("src"))
+								    .on("link", new AttributeRewriter("href"))
+								    .on("form", new AttributeRewriter("action"))
+								    .on("script", new AttributeRewriter("src"))
+								    .on("script, link", new SecurityStripper()) 
+								    .transform(res);
+																
+								// Read the rewritten HTML in chunks and stream it over the WebSocket
+								if (rewrittenRes.body) {
+								    const reader = rewrittenRes.body.getReader();
+								    try {
+								        while (true) {
+								            if (server.readyState !== 1) {
+								                try { await reader.cancel("Client disconnected"); } catch(e) {}
+								                break;
+								            }
+										
+								            const { done, value } = await reader.read();
+								            if (done) break;
+										
+								            try {
+								                server.send(value); // value is already a Uint8Array chunk!
+								            } catch (err) {
+								                try { await reader.cancel("Socket send failed"); } catch(e) {}
+								                break;
+								            }
+								        }
+								    } catch (streamErr) {
+								        try { await reader.cancel("Stream error"); } catch(e) {}
+								    } finally {
+								        reader.releaseLock();
+								    }
+								}
 
 								} else if (res.body) {
 									const reader = res.body.getReader();
