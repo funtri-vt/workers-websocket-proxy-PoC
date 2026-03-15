@@ -35,22 +35,25 @@ export default {
 			}
 
 			// Token-based Security Lock-down
-    		const clientToken = url.searchParams.get("token");
+			const clientToken = url.searchParams.get("token");
+			const EXPECTED_TOKEN = env.PROXY_PASSWORD; 
+
+			if (!EXPECTED_TOKEN || clientToken !== EXPECTED_TOKEN) {
+				console.warn(`[Security] WebSocket rejected. Token mismatch or missing secret.`);
 				
-    		// Pull the password from Cloudflare's secure environment variables
-    		const EXPECTED_TOKEN = env.PROXY_PASSWORD; 
+				// Trick the browser: Accept the WS just long enough to send the exact error text!
+				const { 0: client, 1: server } = new WebSocketPair();
+				server.accept();
 				
-    		// Safety check: Make sure you actually set the variable, 
-    		// otherwise it locks everyone out (including you!)
-    		if (!EXPECTED_TOKEN) {
-    		  console.error("[Security] PROXY_PASSWORD environment variable is missing!");
-    		  return new Response("Server Configuration Error", { status: 500 });
-    		}
-		
-    		if (clientToken !== EXPECTED_TOKEN) {
-    		  console.warn(`[Security] Blocked unauthorized connection. Invalid token.`);
-    		  return new Response("Forbidden: Invalid/Missing Token", { status: 403 });
-    		}
+				const errorMsg = !EXPECTED_TOKEN 
+					? "Cloudflare Error: PROXY_PASSWORD secret was not set via Wrangler." 
+					: "Access Denied: The password you entered in Settings is incorrect.";
+					
+				server.send(JSON.stringify({ type: "error", message: errorMsg }));
+				server.close(1008, "Security Violation");
+				
+				return new Response(null, { status: 101, webSocket: client });
+			}
 
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();
