@@ -142,6 +142,54 @@
   </div>
 
   <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    const panel = document.getElementById("settings-panel");
+    const toggleBtn = document.getElementById("settings-toggle");
+    const saveBtn = document.getElementById("settings-save");
+    const logToggle = document.getElementById("setting-debug-logs");
+    const backendInput = document.getElementById("setting-backend-url");
+    // Load saved settings (or defaults)
+    const loadSettings = () => {
+      const settings = JSON.parse(localStorage.getItem("proxySettings")) || {
+        debugLogs: true,
+        backendUrl: window.location.origin // Default to current host
+      };
+      logToggle.checked = settings.debugLogs;
+      backendInput.value = settings.backendUrl;
+      return settings;
+    };
+    
+    // Send settings to the Service Worker
+    const syncWithServiceWorker = (settings) => {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'UPDATE_SETTINGS',
+          payload: settings
+        });
+      }
+    };
+  
+    // Initialize
+    let currentSettings = loadSettings();
+    // Wait a brief moment for SW to be ready, then sync
+    navigator.serviceWorker.ready.then(() => syncWithServiceWorker(currentSettings));
+  
+    // UI Event Listeners
+    toggleBtn.addEventListener("click", () => {
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+    });
+  
+    saveBtn.addEventListener("click", () => {
+      const newSettings = {
+        debugLogs: logToggle.checked,
+        backendUrl: backendInput.value.trim()
+      };
+      localStorage.setItem("proxySettings", JSON.stringify(newSettings));
+      syncWithServiceWorker(newSettings);
+      panel.style.display = "none";
+      console.log("Settings saved!", newSettings);
+    });
+  });
     // --- 1. Logging Engine ---
     // Suggestion 4: Targeted logging instead of overriding standard console.log
     window.appLogs = [];
