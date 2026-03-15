@@ -235,9 +235,10 @@ export default {
 										.on("script, link", new SecurityStripper()) 
 										.transform(dummyRes);
 
-									// 3. Extract the finalized text and send it safely in one chunk
+									// 3. Extract finalized text, encode to BINARY, and send safely
 									const finalHtml = await rewrittenRes.text();
-									safeSend(finalHtml);
+									const binaryHtml = new TextEncoder().encode(finalHtml);
+									safeSend(binaryHtml);
 
 								} else if (res.body) {
 									// For heavy binary files (images, css, videos), stream them with backpressure
