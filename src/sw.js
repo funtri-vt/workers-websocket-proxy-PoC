@@ -30,19 +30,7 @@ const dbPromise = new Promise((resolve, reject) => {
   request.onerror = () => reject('IDB Error');
 });
 
-// Stores origin per browser tab: { "client-id": "https://wikipedia.org" }
-let clientOrigins = new Map(); 
 
-// ADD THIS LINE BACK:
-let activeProxyOrigin = 'https://wikipedia.org'; 
-
-// Helper to get the origin for a specific request
-function getBaseOrigin(event) {
-  if (event.clientId && clientOrigins.has(event.clientId)) {
-    return clientOrigins.get(event.clientId);
-  }
-  return activeProxyOrigin; 
-}
 
 // --- SECURITY FIX 1: HTML Sanitizer Helper ---
 const escapeHTML = (str) => {
@@ -174,36 +162,74 @@ async function handleProxyRequest(event, request, url) {
   else {
     targetUrl = targetUrl.replace(/&amp;/g, '&');
     
+    // If the URL is relative (e.g., /wiki/Internet)
     if (!/^https?:\/\//i.test(targetUrl)) {
       const referer = request.referrer;
       let resolved = false;
 
-      if (referer && referer.includes('/service/')) {
+      // 1. Primary Source of Truth: The Referrer
+      if (referer) {
         try {
           const refUrl = new URL(referer);
-          let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
+          let baseTarget = '';
+
+          if (refUrl.pathname.includes('/service/')) {
+            // Extract the actual proxied site from the referrer's proxy path
+            const serviceIdx = refUrl.pathname.indexOf('/service/');
+            baseTarget = decodeURIComponent(refUrl.pathname.substring(serviceIdx + 9));
+          } else {
+            // If the referrer is already a direct site (e.g., caught during a redirect)
+            baseTarget = refUrl.toString();
+          }
+
           baseTarget = baseTarget.replace(/&amp;/g, '&');
           if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
-          
+
           targetUrl = new URL(targetUrl, baseTarget).toString();
           resolved = true;
-        } catch (e) {}
+        } catch (e) {
+          remoteLog(`[SW] Warning: Failed to parse referrer for context: ${referer}`);
+        }
       } 
       
+      // 2. Absolute Fallback (If no referrer exists, do NOT guess the origin)
       if (!resolved) {
-        try { targetUrl = new URL(targetUrl, getBaseOrigin(event)).toString(); } 
-        catch(e) { targetUrl = 'https://' + targetUrl.replace(/^\//, ''); }
+        remoteLog(`[SW] ⚠️ Orphaned relative request: ${targetUrl}. Defaulting to https.`);
+        // Strip leading slashes to prevent malformed URLs
+        targetUrl = 'https://' + targetUrl.replace(/^\/+/, '');
       }
     }
   }
-  if (isDocument && event.clientId) {
-    try { 
-      const newOrigin = new URL(targetUrl).origin;
-      clientOrigins.set(event.clientId, newOrigin);
-      activeProxyOrigin = newOrigin; // Still keep global as a backup
-    } catch(e) {}
-  }
+
+  // --- STRICT LOOPBACK PREVENTION ---
+  // If the resolution accidentally resulted in the proxy's own domain, kill it immediately.
+  try {
+    const parsedTarget = new URL(targetUrl);
+    if (parsedTarget.hostname === self.location.hostname) {
+      remoteLog(`[SW] 🛑 CRITICAL LOOP DETECTED: Aborting fetch to own domain -> ${targetUrl}`);
+      // Return a safe 204 No Content to instantly kill the looping request 
+      // without triggering a Cloudflare Access wall or breaking the page load.
+      return new Response(null, { status: 204 }); 
+    }
+  } catch(e) {}
+
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
+
+  // Prevent the proxy from ever trying to proxy its own host domain
+  try {
+    const parsedTarget = new URL(targetUrl);
+    if (parsedTarget.hostname === self.location.hostname) {
+      remoteLog(`[SW] 🛑 LOOP PREVENTED: Attempted to proxy own domain! URL: ${targetUrl}`);
+      
+      // The relative URL resolution failed and defaulted to the proxy's domain.
+      // Force it back to the last known safe proxied origin.
+      targetUrl = new URL(parsedTarget.pathname + parsedTarget.search, activeProxyOrigin).toString();
+      
+      remoteLog(`[SW] 🔄 Rerouted loopback to: ${targetUrl}`);
+    }
+  } catch(e) {
+    // Malformed URL, let it fall through
+  }
 
   // --- SECURITY FIX 3: Hostname-specific Ad Blocking ---
   const blockList = [
