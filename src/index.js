@@ -121,10 +121,15 @@ export default {
 										} catch (e) {
 											headersOut[key] = value;
 										}
-									} else if (!["content-length", "content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
+									} else if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
 										headersOut[key] = value;
 									}
 								});
+
+								if (contentType.includes("text/html")) {
+									delete headersOut["content-length"];
+									delete headersOut["Content-Length"];
+								}
 
 								headersOut["Access-Control-Allow-Origin"] = "*";
 								headersOut["Access-Control-Allow-Methods"] = "*";
