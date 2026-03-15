@@ -22,7 +22,12 @@ export default {
 
 		if (url.pathname === "/") {
 			return new Response(indexHtml, {
-				headers: { "content-type": "text/html" },
+				headers: { 
+					"content-type": "text/html",
+					"cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+					"pragma": "no-cache",
+					"expires": "0"
+				},
 			});
 		}
 
