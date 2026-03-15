@@ -246,47 +246,35 @@ export default {
 									safeSend(binaryHtml);
 
 								} else if (res.body) {
-									// For heavy binary files (images, css, videos), stream them with backpressure
+									// Reverted to original max-speed pump. 
+									// Backpressure artificially kills large game assets in Workers!
 									const reader = res.body.getReader();
 									try {
-										let backpressureWait = 0;
 										while (true) {
+											// 1. Check if client disconnected
 											if (server.readyState !== 1) {
-												await reader.cancel("Client disconnected");
+												try { await reader.cancel("Client disconnected"); } catch(e) {}
 												break;
 											}
 
-											// Backpressure valve with a Deadlock Timeout
-											while (server.bufferedAmount > 1024 * 1024) {
-												await new Promise(resolve => setTimeout(resolve, 10));
-												backpressureWait++;
-												
-												// If frozen for ~5 seconds, assume dead connection and abort
-												if (server.readyState !== 1 || backpressureWait > 500) {
-													await reader.cancel("Connection deadlocked");
-													try { server.close(); } catch(e) {}
-													break;
-												}
-											}
-											backpressureWait = 0; // Reset after healthy drain
-											if (server.readyState !== 1) break;
-
+											// 2. Read next chunk
 											const { done, value } = await reader.read();
 											if (done) break;
 
+											// 3. Send over WS immediately
 											try {
 												server.send(value);
 											} catch (err) {
-												await reader.cancel("Socket send failed");
+												try { await reader.cancel("Socket send failed"); } catch(e) {}
 												break;
 											}
 										}
 									} catch (streamErr) {
-										// Catch any native stream errors and cancel cleanly
 										try { await reader.cancel("Stream error"); } catch(e) {}
 									} finally {
 										reader.releaseLock();
 									}
+								}
 								
 								safeSend(JSON.stringify({ type: "end" }));
 								}
