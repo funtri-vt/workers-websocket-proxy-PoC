@@ -138,11 +138,6 @@
       <input type="text" id="setting-backend-url" style="width: 100%; margin-top: 5px; padding: 5px;">
     </label>
 
-    <label style="display: block; margin-bottom: 10px;">
-      Proxy Password:
-      <input type="password" id="setting-password" style="width: 100%; margin-top: 5px; padding: 5px;">
-    </label>
-
     <button id="settings-save" style="margin-top: 10px; padding: 5px 10px; cursor: pointer;">Save & Apply</button>
     <button id="settings-reset" style="margin-top: 10px; margin-left: 10px; padding: 5px 10px; cursor: pointer; background: #666; color: #fff; border: 1px solid #444; border-radius: 3px;">Reset to Defaults</button>
     
@@ -177,7 +172,6 @@
       return JSON.parse(localStorage.getItem("proxySettings")) || {
         debugLogs: true,
         backendUrl: window.location.origin,
-        password: "" 
       };
     };
 
@@ -209,11 +203,8 @@
       
       const logToggle = document.getElementById("setting-debug-logs");
       const backendInput = document.getElementById("setting-backend-url");
-      const passInput = document.getElementById("setting-password");
-
       // Initialize UI with saved settings
       let currentSettings = loadSettings();
-      passInput.value = currentSettings.password; 
       logToggle.checked = currentSettings.debugLogs;
       backendInput.value = currentSettings.backendUrl;
 
@@ -229,7 +220,6 @@
         const newSettings = {
           debugLogs: logToggle.checked,
           backendUrl: backendInput.value.trim(),
-          password: passInput.value.trim() 
         };
         localStorage.setItem("proxySettings", JSON.stringify(newSettings));
         syncWithServiceWorker(newSettings);
@@ -241,14 +231,12 @@
       const DEFAULT_SETTINGS = {
         debugLogs: true,
         backendUrl: window.location.origin,
-        password: ""
       };
 
       resetBtn.addEventListener("click", () => {
         localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
         logToggle.checked = DEFAULT_SETTINGS.debugLogs;
         backendInput.value = DEFAULT_SETTINGS.backendUrl;
-        passInput.value = DEFAULT_SETTINGS.password; 
         syncWithServiceWorker(DEFAULT_SETTINGS);
         alert("Settings have been reset to default values.");
       });

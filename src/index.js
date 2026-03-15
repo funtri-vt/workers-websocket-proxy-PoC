@@ -39,26 +39,7 @@ export default {
 				return new Response("Expected WebSocket", { status: 426 });
 			}
 
-			// Token-based Security Lock-down
-			const clientToken = url.searchParams.get("token");
-			const EXPECTED_TOKEN = env.PROXY_PASSWORD; 
-
-			if (!EXPECTED_TOKEN || clientToken !== EXPECTED_TOKEN) {
-				console.warn(`[Security] WebSocket rejected. Token mismatch or missing secret.`);
-				
-				// Trick the browser: Accept the WS just long enough to send the exact error text!
-				const { 0: client, 1: server } = new WebSocketPair();
-				server.accept();
-				
-				const errorMsg = !EXPECTED_TOKEN 
-					? "Cloudflare Error: PROXY_PASSWORD secret was not set via Wrangler." 
-					: `Access Denied: Client sent "${clientToken}", but Server expected "${EXPECTED_TOKEN}".`;;
-					
-				server.send(JSON.stringify({ type: "error", message: errorMsg }));
-				server.close(1008, "Security Violation");
-				
-				return new Response(null, { status: 101, webSocket: client });
-			}
+			// Token authentication completely removed. Open door policy.
 
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();
@@ -93,9 +74,9 @@ export default {
 
 							if (msg.body) {
   							try {
- 							   // This executes entirely in C++, consuming virtually zero JS CPU time.
- 							   fetchOptions.body = Buffer.from(msg.body, "base64");
- 							} catch (e) {
+  							   // This executes entirely in C++, consuming virtually zero JS CPU time.
+  							   fetchOptions.body = Buffer.from(msg.body, "base64");
+  							} catch (e) {
    							 	safeSend(JSON.stringify({ type: "error", message: "Failed to decode request body." }));
     							return;
 							  }
@@ -164,8 +145,6 @@ export default {
 
 								let streamResponse = res;
 
-
-
 								if (contentType.includes("text/html")) {
 									const targetDomain = new URL(msg.url).hostname;
 									const baseUrl = msg.url; 
@@ -207,7 +186,6 @@ export default {
 														}
 														
 														const targetUrl = encodeURIComponent(url);
-														// UPDATED: Now points to the native Worker proxy route
 														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/proxy-ws/?target=' + targetUrl;
 														
 														return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
@@ -243,11 +221,9 @@ export default {
 										}
 									}
 
-									// 1. Buffer the raw HTML into memory to prevent stream deadlocks
 									const rawHtml = await res.text();
 									const dummyRes = new Response(rawHtml, { headers: res.headers });
 
-									// 2. Pass it through HTMLRewriter
 									const rewrittenRes = new HTMLRewriter()
 										.on("head", new ScriptInjector())
 										.on("a", new AttributeRewriter("href"))
@@ -258,28 +234,22 @@ export default {
 										.on("script, link", new SecurityStripper()) 
 										.transform(dummyRes);
 
-									// 3. Extract finalized text, encode to BINARY, and send safely
 									const finalHtml = await rewrittenRes.text();
 									const binaryHtml = new TextEncoder().encode(finalHtml);
 									safeSend(binaryHtml);
 
 								} else if (res.body) {
-									// Reverted to original max-speed pump. 
-									// Backpressure artificially kills large game assets in Workers!
 									const reader = res.body.getReader();
 									try {
 										while (true) {
-											// 1. Check if client disconnected
 											if (server.readyState !== 1) {
 												try { await reader.cancel("Client disconnected"); } catch(e) {}
 												break;
 											}
 
-											// 2. Read next chunk
 											const { done, value } = await reader.read();
 											if (done) break;
 
-											// 3. Send over WS immediately
 											try {
 												server.send(value);
 											} catch (err) {
@@ -344,12 +314,10 @@ export default {
 			try {
 				targetResponse = await fetch(targetUrl, { headers: proxyHeaders });
 			} catch (fetchErr) {
-				// If the target server drops the connection, catch the error and return a safe 502 Bad Gateway
 				return new Response(`WebSocket upstream fetch failed: ${fetchErr.message}`, { status: 502 });
 			}
 
 			if (targetResponse.status !== 101 || !targetResponse.webSocket) {
-				// FIX: Cancel the unread body to prevent the Worker from hanging!
 				if (targetResponse.body) {
 					try { await targetResponse.body.cancel(); } catch (e) {}
 				}

@@ -2,7 +2,6 @@
 let config = {
   debugLogs: true,
   backendUrl: self.location.origin,
-  password: ""
 };
 
 // Force SW to take control immediately
@@ -13,7 +12,7 @@ self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim(
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'UPDATE_SETTINGS') {
     config = { ...config, ...event.data.payload };
-    remoteLog("[SW] ⚙️ Internal config updated:", config);
+    console.log("[SW] ⚙️ Internal config updated:", config);
   }
 });
 
@@ -183,16 +182,11 @@ async function handleProxyRequest(request, url) {
 
   return new Promise((resolve) => {
     try {
+      // 2. Open WebSocket to the Worker
       const wsUrl = new URL('/ws/', config.backendUrl);
-      
-      // Attach the password!
-      if (config.password) {
-        wsUrl.searchParams.set("token", config.password);
-      }
-      
       wsUrl.protocol = wsUrl.protocol === 'http:' ? 'ws:' : 'wss:';
       
-      remoteLog(`[SW] Opening WebSocket to Backend at ${wsUrl.href}...`);
+      remoteLog(`[SW] Opening WebSocket to Backend at ${wsUrl.origin}...`);
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";
       
