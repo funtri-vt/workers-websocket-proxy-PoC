@@ -130,7 +130,7 @@ self.addEventListener('fetch', event => {
       const proxyUrl = new URL(url.origin + '/service/' + encodeURIComponent(targetUrlStr));
       
       console.log(`[SW Detective] Re-routing ${dest || 'asset'}: ${url.pathname} -> ${targetUrlStr}`);
-      return event.respondWith(handleProxyRequest(event.request, proxyUrl));
+      return event.respondWith(handleProxyRequest(event, event.request, proxyUrl));
     } catch (e) {
       console.warn("[SW Detective] Resolution failed, falling through...");
     }
@@ -141,10 +141,10 @@ self.addEventListener('fetch', event => {
     return; 
   }
 
-  event.respondWith(handleProxyRequest(event.request, url));
+  event.respondWith(handleProxyRequest(event, event.request, url));
 });
 
-async function handleProxyRequest(request, url) {
+async function handleProxyRequest(event, request, url) {
   let targetUrl = url.pathname + url.search;
   const isDocument = request.destination === 'document' || request.destination === 'iframe';
 
