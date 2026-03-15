@@ -13,7 +13,7 @@ self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim(
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'UPDATE_SETTINGS') {
     config = { ...config, ...event.data.payload };
-    console.log("[SW] ⚙️ Internal config updated:", config);
+    remoteLog("[SW] ⚙️ Internal config updated:", config);
   }
 });
 
