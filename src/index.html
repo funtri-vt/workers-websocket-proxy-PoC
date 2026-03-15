@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V2 Proxy Sandbox</title>
+    <style>
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            margin: 0; 
+            background: #f4f4f9; 
+        }
+        .container { 
+            background: white; 
+            padding: 2.5rem; 
+            border-radius: 12px; 
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1); 
+            width: 100%; 
+            max-width: 400px; 
+            text-align: center; 
+        }
+        h2 { margin-top: 0; color: #333; }
+        input { 
+            width: 100%; 
+            padding: 0.85rem; 
+            margin-bottom: 1rem; 
+            border: 2px solid #ddd; 
+            border-radius: 6px; 
+            box-sizing: border-box; 
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+        input:focus { border-color: #007bff; outline: none; }
+        button { 
+            width: 100%; 
+            padding: 0.85rem; 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 1rem;
+            font-weight: bold; 
+            transition: background 0.2s;
+        }
+        button:hover { background: #0056b3; }
+        #status { 
+            margin-top: 1.2rem; 
+            font-size: 0.85rem; 
+            color: #666; 
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🌐 V2 Sandbox</h2>
+        <form id="proxy-form">
+            <input type="text" id="url-input" placeholder="duckduckgo.com" required autocomplete="off" spellcheck="false">
+            <button type="submit">Launch Proxy</button>
+        </form>
+        <div id="status">Initializing...</div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const form = document.getElementById('proxy-form');
+        const input = document.getElementById('url-input');
+
+        // --- 1. Register the V2 Service Worker ---
+        if ('serviceWorker' in navigator) {
+            // Force update on reload for easier development
+            navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+                .then(registration => { 
+                    statusEl.textContent = '✅ Engine Ready.'; 
+                    statusEl.style.color = '#28a745'; 
+                })
+                .catch(err => { 
+                    statusEl.textContent = '❌ SW Failed: ' + err.message; 
+                    statusEl.style.color = '#dc3545'; 
+                });
+        } else {
+            statusEl.textContent = '⚠️ Service Workers not supported.';
+        }
+
+        // --- 2. Route the Request ---
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            let targetUrl = input.value.trim();
+            
+            // Auto-fill protocol if the user is lazy
+            if (!/^https?:\/\//i.test(targetUrl)) {
+                targetUrl = 'https://' + targetUrl;
+            }
+
+            // Launch the V2 tunnel
+            window.location.href = '/service/' + encodeURIComponent(targetUrl);
+        });
+    </script>
+</body>
+</html>
