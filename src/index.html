@@ -244,7 +244,7 @@
 
     // --- 4. Service Worker Registration ---
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js?v=FINAL_BRIDGE', { scope: '/service/' })
+      navigator.serviceWorker.register('/sw.js?v=GLOBAL_NET_1', { scope: '/' })
         .then(() => proxyLog('System', 'Service Worker registered with scoped access.'))
         .catch(err => proxyLog('System Error', `SW Registration failed: ${err}`));
 
