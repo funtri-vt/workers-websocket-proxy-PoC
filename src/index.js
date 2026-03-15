@@ -180,7 +180,9 @@ export default {
 									        function resolveUrl(url) {
 									          if (!url || typeof url !== 'string') return url;
 									          if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(PROXY_BASE)) return url;
-									
+											  
+											  if (url.startsWith('/service/')) return url;
+											  
 									          let finalUrl = url;
 									          if (url.startsWith('//')) finalUrl = window.location.protocol + url;
 									
@@ -327,7 +329,7 @@ export default {
 								    .on("script", new AttributeRewriter("src"))
 								    .on("script, link", new SecurityStripper()) 
 								    .transform(res);
-																
+
 								// Read the rewritten HTML in chunks and stream it over the WebSocket
 								if (rewrittenRes.body) {
 								    const reader = rewrittenRes.body.getReader();

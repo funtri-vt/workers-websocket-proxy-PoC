@@ -136,8 +136,8 @@ self.addEventListener('fetch', event => {
     }
   }
 
-  // System Bypass (unchanged)
-  if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/')) {
+  // System Bypass
+  if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
     return; 
   }
 
