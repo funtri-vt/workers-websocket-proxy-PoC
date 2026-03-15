@@ -255,23 +255,31 @@
       });
     }
 
-    // --- 5. Routing Engine ---
+    // --- 5. Routing & Smart Omnibox Engine ---
     function loadUrl() {
-      // 1. Wake up the SW and send the password
-      const currentSettings = loadSettings();
-      syncWithServiceWorker(currentSettings);
-
-      const input = document.getElementById('url-input').value.trim();
+      let input = document.getElementById('url-input').value.trim();
       if (!input) return;
-      
-      proxyLog('Client', `Preparing route to: ${input}. Waiting for SW...`);
 
-      // 2. Give the SW 100 milliseconds to catch the message BEFORE we trigger the fetch
-      setTimeout(() => {
-        const frame = document.getElementById('frame');
-        frame.removeAttribute('srcdoc');
-        frame.src = '/service/' + encodeURIComponent(input); 
-      }, 100);
+      let finalUrl = input;
+
+      // Smart Omnibox Logic:
+      // If the input has spaces, or DOESN'T have a dot (like "cats" or "hello world"), 
+      // treat it as a search query.
+      if (input.includes(' ') || !input.includes('.')) {
+        finalUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(input);
+        proxyLog('Client', `🔍 Search detected. Routing query to DuckDuckGo...`);
+      } 
+      // If it looks like a URL but is missing http://, add it for them
+      else if (!input.startsWith('http://') && !input.startsWith('https://')) {
+        finalUrl = 'https://' + input;
+      }
+
+      const frame = document.getElementById('frame');
+      proxyLog('Client', `🚀 Routing to: ${finalUrl}`);
+      frame.removeAttribute('srcdoc');
+      
+      // Route through our proxy
+      frame.src = '/service/' + encodeURIComponent(finalUrl); 
     }
 
     document.getElementById('url-input').addEventListener('keypress', function (e) {

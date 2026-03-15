@@ -65,7 +65,8 @@ export default {
 							proxyHeaders.set("Host", new URL(msg.url).host);
 							proxyHeaders.set("Origin", new URL(msg.url).origin);
 							proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
+							// ADD THIS LINE TO FIX SEARCH ENGINES:
+							proxyHeaders.set("Referer", new URL(msg.url).origin + "/");
 							const fetchOptions = {
 								method: msg.method,
 								headers: proxyHeaders,
