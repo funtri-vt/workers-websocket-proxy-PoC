@@ -215,17 +215,16 @@ async function handleProxyRequest(event, request, url) {
 
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
 
-  // Prevent the proxy from ever trying to proxy its own host domain
+  // --- STRICT LOOPBACK PREVENTION ---
   try {
     const parsedTarget = new URL(targetUrl);
     if (parsedTarget.hostname === self.location.hostname) {
-      remoteLog(`[SW] 🛑 LOOP PREVENTED: Attempted to proxy own domain! URL: ${targetUrl}`);
+      remoteLog(`[SW] 🛑 CRITICAL LOOP DETECTED: Aborting fetch to own domain -> ${targetUrl}`);
       
-      // The relative URL resolution failed and defaulted to the proxy's domain.
-      // Force it back to the last known safe proxied origin.
-      targetUrl = new URL(parsedTarget.pathname + parsedTarget.search, activeProxyOrigin).toString();
-      
-      remoteLog(`[SW] 🔄 Rerouted loopback to: ${targetUrl}`);
+      // We no longer have a global fallback origin. 
+      // Return a blank 204 response to silently kill the phantom request 
+      // without crashing the page or hitting the backend.
+      return new Response(null, { status: 204 }); 
     }
   } catch(e) {
     // Malformed URL, let it fall through
