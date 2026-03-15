@@ -150,94 +150,95 @@
 
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-    const panel = document.getElementById("settings-panel");
-    const toggleBtn = document.getElementById("settings-toggle");
-    const saveBtn = document.getElementById("settings-save");
-    const logToggle = document.getElementById("setting-debug-logs");
-    const backendInput = document.getElementById("setting-backend-url");
-    // Load saved settings (or defaults)
-    const loadSettings = () => {
-      // In loadSettings(), add the default:
-      const settings = JSON.parse(localStorage.getItem("proxySettings")) || {
+      const panel = document.getElementById("settings-panel");
+      const toggleBtn = document.getElementById("settings-toggle");
+      const saveBtn = document.getElementById("settings-save");
+      const resetBtn = document.getElementById("settings-reset"); // Moved inside!
+      
+      const logToggle = document.getElementById("setting-debug-logs");
+      const backendInput = document.getElementById("setting-backend-url");
+      const passInput = document.getElementById("setting-password"); // Added missing definition!
+
+      // Load saved settings (or defaults)
+      const loadSettings = () => {
+        const settings = JSON.parse(localStorage.getItem("proxySettings")) || {
+          debugLogs: true,
+          backendUrl: window.location.origin,
+          password: "" 
+        };
+        
+        passInput.value = settings.password; 
+        logToggle.checked = settings.debugLogs;
+        backendInput.value = settings.backendUrl;
+        
+        return settings;
+      };
+      
+      // Send settings to the Service Worker
+      const syncWithServiceWorker = (settings) => {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'UPDATE_SETTINGS',
+            payload: settings
+          });
+        }
+      };
+    
+      // Initialize
+      let currentSettings = loadSettings();
+      // Wait a brief moment for SW to be ready, then sync
+      navigator.serviceWorker.ready.then(() => syncWithServiceWorker(currentSettings));
+    
+      // UI Event Listeners
+      toggleBtn.addEventListener("click", () => {
+        panel.style.display = panel.style.display === "none" ? "block" : "none";
+      });
+    
+      saveBtn.addEventListener("click", () => {
+        const newSettings = {
+          debugLogs: logToggle.checked,
+          backendUrl: backendInput.value.trim(),
+          password: passInput.value.trim() 
+        };
+        localStorage.setItem("proxySettings", JSON.stringify(newSettings));
+        syncWithServiceWorker(newSettings);
+        panel.style.display = "none";
+        console.log("Settings saved!", newSettings);
+      });
+
+      // Define the rock-solid defaults
+      const DEFAULT_SETTINGS = {
         debugLogs: true,
         backendUrl: window.location.origin,
-        password: "" // New default
+        password: ""
       };
-      passInput.value = settings.password; // Set UI
-      logToggle.checked = settings.debugLogs;
-      backendInput.value = settings.backendUrl;
+
+      resetBtn.addEventListener("click", () => {
+        // 1. Overwrite localStorage with defaults
+        localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
       
-      return settings;
-    };
-    
-    // Send settings to the Service Worker
-    const syncWithServiceWorker = (settings) => {
-      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: 'UPDATE_SETTINGS',
-          payload: settings
-        });
-      }
-    };
-  
-    // Initialize
-    let currentSettings = loadSettings();
-    // Wait a brief moment for SW to be ready, then sync
-    navigator.serviceWorker.ready.then(() => syncWithServiceWorker(currentSettings));
-  
-    // UI Event Listeners
-    toggleBtn.addEventListener("click", () => {
-      panel.style.display = panel.style.display === "none" ? "block" : "none";
-    });
-  
-    saveBtn.addEventListener("click", () => {
-      const newSettings = {
-        debugLogs: logToggle.checked,
-        backendUrl: backendInput.value.trim(),
-        password: passInput.value.trim() // Capture password
-      };
-      localStorage.setItem("proxySettings", JSON.stringify(newSettings));
-      syncWithServiceWorker(newSettings);
-      panel.style.display = "none";
-      console.log("Settings saved!", newSettings);
+        // 2. Visually update the UI toggles/inputs to match
+        logToggle.checked = DEFAULT_SETTINGS.debugLogs;
+        backendInput.value = DEFAULT_SETTINGS.backendUrl;
+        passInput.value = DEFAULT_SETTINGS.password; // Added this so the UI clears the password!
+      
+        // 3. Beam the reset config instantly to the Service Worker
+        syncWithServiceWorker(DEFAULT_SETTINGS);
+      
+        console.log("Settings safely reset to defaults!", DEFAULT_SETTINGS);
+        alert("Settings have been reset to default values.");
       });
-    });
 
-    const resetBtn = document.getElementById("settings-reset");
-
-    // Define the rock-solid defaults
-    const DEFAULT_SETTINGS = {
-      debugLogs: true,
-      backendUrl: window.location.origin,
-      password: ""
-    };
-
-    resetBtn.addEventListener("click", () => {
-      // 1. Overwrite localStorage with defaults
-      localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
-    
-      // 2. Visually update the UI toggles/inputs to match
-      logToggle.checked = DEFAULT_SETTINGS.debugLogs;
-      backendInput.value = DEFAULT_SETTINGS.backendUrl;
-    
-      // 3. Beam the reset config instantly to the Service Worker
-      syncWithServiceWorker(DEFAULT_SETTINGS);
-    
-      console.log("Settings safely reset to defaults!", DEFAULT_SETTINGS);
-    
-      // Optional: Give the user some quick feedback
-      alert("Settings have been reset to default values.");
-    });
+    }); // <--- DOMContentLoaded correctly closes here now!
 
     
     // --- 1. Logging Engine ---
-    // Suggestion 4: Targeted logging instead of overriding standard console.log
     window.appLogs = [];
     function proxyLog(source, message) {
       const timestamp = new Date().toISOString().split('T')[1].replace('Z', '');
       const logEntry = `[${timestamp}] [${source}] ${message}`;
       window.appLogs.push(logEntry);
-      console.log(logEntry); // Still output to standard DevTools safely
+      console.log(logEntry); 
     }
 
     document.getElementById('downloadLogsBtn').addEventListener('click', () => {
@@ -255,9 +256,6 @@
 
     // --- 2. Service Worker Bridge ---
     if ('serviceWorker' in navigator) {
-      // Suggestion 3: Scoped Service Worker
-      // Note: You may need to send a 'Service-Worker-Allowed: /' header from your web server 
-      // for this to work if sw.js is served from the root directory but scoped to /service/
       navigator.serviceWorker.register('/sw.js', { scope: '/service/' })
         .then(() => proxyLog('System', 'Service Worker registered with scoped access.'))
         .catch(err => proxyLog('System Error', `SW Registration failed: ${err}`));
@@ -275,12 +273,10 @@
       if (!input) return;
       const frame = document.getElementById('frame');
       proxyLog('Client', `Routing to: ${input}`);
-      // Nuke the srcdoc so the browser respects our new src URL
       frame.removeAttribute('srcdoc');
       frame.src = '/service/' + encodeURIComponent(input); 
     }
 
-    // Allow pressing "Enter" in the input box
     document.getElementById('url-input').addEventListener('keypress', function (e) {
       if (e.key === 'Enter') loadUrl();
     });
