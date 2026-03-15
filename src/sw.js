@@ -173,7 +173,11 @@ async function handleProxyRequest(request, url) {
       let headersResolved = false;
 
       const stream = new ReadableStream({
-        start(controller) { streamController = controller; }
+        start(controller) { streamController = controller; },
+        cancel(reason) {
+          remoteLog(`[SW] Browser canceled stream. Terminating WS.`);
+          try { ws.close(); } catch(e) {}
+        }
       });
 
       const sendErrorToScreen = (errorMsg) => {
@@ -295,7 +299,8 @@ async function handleProxyRequest(request, url) {
           try { 
             streamController.enqueue(new Uint8Array(event.data)); 
           } catch(e) {
-            remoteLog(`[SW] Enqueue failed: ${e.message}`);
+            remoteLog(`[SW] Enqueue failed: ${e.message}. Closing WS.`);
+            try { ws.close(); } catch(err) {}
           }
         }
       };
