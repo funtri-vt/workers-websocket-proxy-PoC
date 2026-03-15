@@ -174,14 +174,16 @@
         return settings;
       };
       
-      // Send settings to the Service Worker
       const syncWithServiceWorker = (settings) => {
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({
-            type: 'UPDATE_SETTINGS',
-            payload: settings
-          });
-        }
+        navigator.serviceWorker.ready.then((registration) => {
+          if (registration.active) {
+            registration.active.postMessage({
+              type: 'UPDATE_SETTINGS',
+              payload: settings
+            });
+            console.log("📡 Sent settings to SW:", settings);
+          }
+        });
       };
     
       // Initialize
