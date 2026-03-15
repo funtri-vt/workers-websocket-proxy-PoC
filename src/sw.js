@@ -90,164 +90,81 @@ function remoteLog(msg) {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  const referrer = event.request.referrer;
-  const dest = event.request.destination;
 
-  // Identify assets that "leaked" (trying to hit root domain instead of /service/)
-  // We check if it's an asset (image/script/css) OR if the referrer is already in the tunnel
-  const isProxiedReferrer = referrer && referrer.includes('/service/');
-  const isLeakedAsset = !url.pathname.startsWith('/service/') && 
-                        !url.pathname.startsWith('/ws/') && 
-                        url.pathname !== '/sw.js' &&
-                        (isProxiedReferrer || ['image', 'script', 'style', 'font', 'manifest'].includes(dest));
-
-  // --- Replacement for getBaseOrigin (Line 104) ---
-  let currentOrigin = '';
-  const referer = event.request.referrer;
-
-  if (referer && referer.includes('/service/')) {
-    try {
-      // Extract the proxied site from the referrer URL
-      // Example: .../service/https://wikipedia.org/wiki/Main_Page -> https://wikipedia.org
-      const parts = referer.split('/service/');
-      const fullTarget = decodeURIComponent(parts[1]);
-      currentOrigin = new URL(fullTarget).origin;
-    } catch (e) {
-      remoteLog(`[SW] ⚠️ Failed to resolve origin from referrer: ${referer}`);
-    }
-  }
-
-  // Now use currentOrigin to resolve the relative path
-  if (currentOrigin && !targetUrl.startsWith('http')) {
-    targetUrl = new URL(url.pathname + url.search, currentOrigin).toString();
-  }
-  // -----------------------------------------------
-  if (isLeakedAsset && currentOrigin) {
-    try {
-      let baseDomain = currentOrigin;
-      
-      if (isProxiedReferrer) {
-        const refUrl = new URL(referrer);
-        const path = refUrl.pathname;
-        const serviceIdx = path.indexOf('/service/');
-        const rawTarget = path.substring(serviceIdx + 9);
-        baseDomain = new URL(decodeURIComponent(rawTarget)).origin;
+  // 1. --- NAVIGATION GUARD (Fixes "Clicking Links" returning 404s) ---
+  if (event.request.mode === 'navigate' && !url.pathname.startsWith('/service/')) {
+    const referer = event.request.referrer;
+    if (referer && referer.includes('/service/')) {
+      try {
+        const parts = referer.split('/service/');
+        const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
+        // Rewrite the destination to stay inside the proxy tunnel
+        const newDestination = `${self.location.origin}/service/${encodeURIComponent(proxiedOrigin + url.pathname + url.search)}`;
+        return event.respondWith(Response.redirect(newDestination, 301));
+      } catch (e) {
+        remoteLog(`[SW] Navigation rewrite failed: ${e.message}`);
       }
-
-      const targetUrlStr = baseDomain + url.pathname + url.search;
-      const proxyUrl = new URL(url.origin + '/service/' + encodeURIComponent(targetUrlStr));
-      
-      console.log(`[SW Detective] Re-routing ${dest || 'asset'}: ${url.pathname} -> ${targetUrlStr}`);
-      return event.respondWith(handleProxyRequest(event, event.request, proxyUrl));
-    } catch (e) {
-      console.warn("[SW Detective] Resolution failed, falling through...");
     }
   }
 
-  // System Bypass
-  if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
+  // 2. --- SYSTEM BYPASS ---
+  // Let the main UI and WebSockets load normally
+  if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
     return; 
   }
 
+  // 3. Pass everything else to the proxy handler
   event.respondWith(handleProxyRequest(event, event.request, url));
 });
 
 async function handleProxyRequest(event, request, url) {
   let targetUrl = url.pathname + url.search;
-  const isDocument = request.destination === 'document' || request.destination === 'iframe';
 
+  // 1. Resolve the Target URL
   if (targetUrl.startsWith('/service/')) {
-    let innerUrl = decodeURIComponent(targetUrl.replace('/service/', '')).replace(/&amp;/g, '&');    
-    if (!/^https?:\/\//i.test(innerUrl)) {
-      const referer = request.referrer;
-      if (referer && referer.includes('/service/') && !isDocument) {
-        try {
-          const refUrl = new URL(referer);
-          let baseTarget = decodeURIComponent(refUrl.pathname.replace('/service/', ''));
-          baseTarget = baseTarget.replace(/&amp;/g, '&'); 
-          
-          if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
-          targetUrl = new URL(innerUrl, baseTarget).toString();
-        } catch(e) {
-          targetUrl = 'https://' + innerUrl;
-        }
-      } else {
-        targetUrl = 'https://' + innerUrl;
-      }
-    } else {
-      targetUrl = innerUrl;
-    }
-    
-  } 
-  else {
+    // Direct proxy requests from the address bar
+    targetUrl = decodeURIComponent(targetUrl.substring(9)).replace(/&amp;/g, '&');
+  } else {
+    // Relative assets (images, scripts) that leaked out
     targetUrl = targetUrl.replace(/&amp;/g, '&');
     
-    // If the URL is relative (e.g., /wiki/Internet)
     if (!/^https?:\/\//i.test(targetUrl)) {
       const referer = request.referrer;
       let resolved = false;
 
-      // 1. Primary Source of Truth: The Referrer
-      if (referer) {
+      if (referer && referer.includes('/service/')) {
         try {
-          const refUrl = new URL(referer);
-          let baseTarget = '';
-
-          if (refUrl.pathname.includes('/service/')) {
-            // Extract the actual proxied site from the referrer's proxy path
-            const serviceIdx = refUrl.pathname.indexOf('/service/');
-            baseTarget = decodeURIComponent(refUrl.pathname.substring(serviceIdx + 9));
-          } else {
-            // If the referrer is already a direct site (e.g., caught during a redirect)
-            baseTarget = refUrl.toString();
-          }
-
-          baseTarget = baseTarget.replace(/&amp;/g, '&');
-          if (!/^https?:\/\//i.test(baseTarget)) baseTarget = 'https://' + baseTarget;
-
-          targetUrl = new URL(targetUrl, baseTarget).toString();
+          // Extract origin from the proxied referrer and glue the path to it
+          const parts = referer.split('/service/');
+          const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
+          targetUrl = new URL(url.pathname + url.search, proxiedOrigin).toString();
           resolved = true;
         } catch (e) {
-          remoteLog(`[SW] Warning: Failed to parse referrer for context: ${referer}`);
+          remoteLog(`[SW] Asset Resolver Error: ${e.message}`);
         }
-      } 
-      
-      // 2. Absolute Fallback (If no referrer exists, do NOT guess the origin)
+      }
+
       if (!resolved) {
-        remoteLog(`[SW] ⚠️ Orphaned relative request: ${targetUrl}. Defaulting to https.`);
-        // Strip leading slashes to prevent malformed URLs
         targetUrl = 'https://' + targetUrl.replace(/^\/+/, '');
       }
     }
   }
 
-  // --- STRICT LOOPBACK PREVENTION ---
-  // If the resolution accidentally resulted in the proxy's own domain, kill it immediately.
-  try {
-    const parsedTarget = new URL(targetUrl);
-    if (parsedTarget.hostname === self.location.hostname) {
-      remoteLog(`[SW] 🛑 CRITICAL LOOP DETECTED: Aborting fetch to own domain -> ${targetUrl}`);
-      // Return a safe 204 No Content to instantly kill the looping request 
-      // without triggering a Cloudflare Access wall or breaking the page load.
-      return new Response(null, { status: 204 }); 
-    }
-  } catch(e) {}
-
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
 
-  // --- STRICT LOOPBACK PREVENTION ---
+  // 2. --- STRICT LOOPBACK PREVENTION (Relaxed) ---
   try {
     const parsedTarget = new URL(targetUrl);
-    if (parsedTarget.hostname === self.location.hostname) {
-      remoteLog(`[SW] 🛑 CRITICAL LOOP DETECTED: Aborting fetch to own domain -> ${targetUrl}`);
-      
-      // We no longer have a global fallback origin. 
-      // Return a blank 204 response to silently kill the phantom request 
-      // without crashing the page or hitting the backend.
-      return new Response(null, { status: 204 }); 
+    // If it hits our own domain AND doesn't have the /service/ prefix
+    if (parsedTarget.hostname === self.location.hostname && !parsedTarget.pathname.startsWith('/service/')) {
+      const bypassList = ['/', '/index.html', '/sw.js', '/style.css']; 
+      if (!bypassList.includes(parsedTarget.pathname)) {
+        remoteLog(`[SW] 🛑 Blocked phantom loopback to: ${targetUrl}`);
+        return new Response(null, { status: 204 }); 
+      }
     }
   } catch(e) {
-    // Malformed URL, let it fall through
+    // Malformed URL, allow it to fall through to a natural error
   }
 
   // --- SECURITY FIX 3: Hostname-specific Ad Blocking ---
