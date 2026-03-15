@@ -141,6 +141,8 @@ export default {
 
 								let streamResponse = res;
 
+
+
 								if (contentType.includes("text/html")) {
 									const targetDomain = new URL(msg.url).hostname;
 									const baseUrl = msg.url; 
@@ -218,7 +220,12 @@ export default {
 										}
 									}
 
-									streamResponse = new HTMLRewriter()
+									// 1. Buffer the raw HTML into memory to prevent stream deadlocks
+									const rawHtml = await res.text();
+									const dummyRes = new Response(rawHtml, { headers: res.headers });
+
+									// 2. Pass it through HTMLRewriter
+									const rewrittenRes = new HTMLRewriter()
 										.on("head", new ScriptInjector())
 										.on("a", new AttributeRewriter("href"))
 										.on("img", new AttributeRewriter("src"))
@@ -226,38 +233,31 @@ export default {
 										.on("form", new AttributeRewriter("action"))
 										.on("script", new AttributeRewriter("src"))
 										.on("script, link", new SecurityStripper()) 
-										.transform(res);
-								}
+										.transform(dummyRes);
 
-								if (streamResponse.body) {
-									const reader = streamResponse.body.getReader();
+									// 3. Extract the finalized text and send it safely in one chunk
+									const finalHtml = await rewrittenRes.text();
+									safeSend(finalHtml);
+
+								} else if (res.body) {
+									// For heavy binary files (images, css, videos), stream them with backpressure
+									const reader = res.body.getReader();
 									try {
 										while (true) {
-											// 1. Check if client disconnected
 											if (server.readyState !== 1) {
 												await reader.cancel("Client disconnected");
 												break;
 											}
 
-											// --- SECURITY/STABILITY FIX: BACKPRESSURE ---
-											// If the WebSocket has more than 1MB of unsent data waiting,
-											// pause the loop for 10ms to let the client's internet catch up.
-											// This completely prevents Out-Of-Memory (OOM) crashes.
+											// Backpressure valve prevents OOM crashes on huge files
 											while (server.bufferedAmount > 1024 * 1024) {
 												await new Promise(resolve => setTimeout(resolve, 10));
 												if (server.readyState !== 1) break;
 											}
-											
-											if (server.readyState !== 1) {
-												await reader.cancel("Client disconnected during backpressure");
-												break;
-											}
 
-											// 2. Read the next chunk from the target server
 											const { done, value } = await reader.read();
 											if (done) break;
 
-											// 3. Send over WebSocket
 											try {
 												server.send(value);
 											} catch (err) {
