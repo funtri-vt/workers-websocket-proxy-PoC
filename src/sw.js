@@ -189,7 +189,7 @@ async function handleProxyRequest(request, url) {
       
       wsUrl.protocol = wsUrl.protocol === 'http:' ? 'ws:' : 'wss:';
       
-      remoteLog(`[SW] Opening WebSocket to Backend at ${wsUrl.origin}...`);
+      remoteLog(`[SW] Opening WebSocket to Backend at ${wsUrl.href}...`);
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";
       
