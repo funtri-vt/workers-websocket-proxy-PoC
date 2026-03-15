@@ -185,12 +185,16 @@
     const syncWithServiceWorker = (settings) => {
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.ready.then((registration) => {
-          if (registration.active) {
-            registration.active.postMessage({
+          // Grab the active controller OR the registration
+          const sw = navigator.serviceWorker.controller || registration.active;
+          if (sw) {
+            sw.postMessage({
               type: 'UPDATE_SETTINGS',
               payload: settings
             });
             console.log("📡 Reminded SW of settings:", settings);
+          } else {
+            console.log("⚠️ ERROR: No active SW found to send settings to!");
           }
         });
       }
@@ -265,16 +269,21 @@
 
     // --- 5. Routing Engine ---
     function loadUrl() {
-      // WAKE UP CALL #2: Remind SW of the password right before fetching!
+      // 1. Wake up the SW and send the password
       const currentSettings = loadSettings();
       syncWithServiceWorker(currentSettings);
 
       const input = document.getElementById('url-input').value.trim();
       if (!input) return;
-      const frame = document.getElementById('frame');
-      proxyLog('Client', `Routing to: ${input}`);
-      frame.removeAttribute('srcdoc');
-      frame.src = '/service/' + encodeURIComponent(input); 
+      
+      proxyLog('Client', `Preparing route to: ${input}. Waiting for SW...`);
+
+      // 2. Give the SW 100 milliseconds to catch the message BEFORE we trigger the fetch
+      setTimeout(() => {
+        const frame = document.getElementById('frame');
+        frame.removeAttribute('srcdoc');
+        frame.src = '/service/' + encodeURIComponent(input); 
+      }, 100);
     }
 
     document.getElementById('url-input').addEventListener('keypress', function (e) {
