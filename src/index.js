@@ -284,7 +284,7 @@ export default {
 									}
 								
 								safeSend(JSON.stringify({ type: "end" }));
-
+								}
 							} catch (fetchError) {
 								safeSend(JSON.stringify({ 
 									type: "error", 
