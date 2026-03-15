@@ -47,7 +47,7 @@ export default {
 				
 				const errorMsg = !EXPECTED_TOKEN 
 					? "Cloudflare Error: PROXY_PASSWORD secret was not set via Wrangler." 
-					: "Access Denied: The password you entered in Settings is incorrect.";
+					: `Access Denied: Client sent "${clientToken}", but Server expected "${EXPECTED_TOKEN}".`;;
 					
 				server.send(JSON.stringify({ type: "error", message: errorMsg }));
 				server.close(1008, "Security Violation");
