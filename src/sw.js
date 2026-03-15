@@ -91,29 +91,43 @@ function remoteLog(msg) {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // 1. --- NAVIGATION GUARD (Fixes "Clicking Links" returning 404s) ---
-  if (event.request.mode === 'navigate' && !url.pathname.startsWith('/service/')) {
-    const referer = event.request.referrer;
-    if (referer && referer.includes('/service/')) {
-      try {
-        const parts = referer.split('/service/');
-        const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
-        // Rewrite the destination to stay inside the proxy tunnel
-        const newDestination = `${self.location.origin}/service/${encodeURIComponent(proxiedOrigin + url.pathname + url.search)}`;
-        return event.respondWith(Response.redirect(newDestination, 301));
-      } catch (e) {
-        remoteLog(`[SW] Navigation rewrite failed: ${e.message}`);
-      }
-    }
-  }
-
-  // 2. --- SYSTEM BYPASS ---
-  // Let the main UI and WebSockets load normally
+  // --- 1. SYSTEM BYPASS ---
   if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
     return; 
   }
 
-  // 3. Pass everything else to the proxy handler
+  // --- 2. LEAKED ASSET & FORM RECOVERY (Fixes Baby Globe & DuckDuckGo) ---
+  // If a request hits our domain without the /service/ prefix, it "leaked"
+  if (!url.pathname.startsWith('/service/')) {
+    const referer = event.request.referrer;
+    
+    if (referer && referer.includes('/service/')) {
+      try {
+        // Extract the original target domain from the referrer
+        const parts = referer.split('/service/');
+        const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
+        
+        // Reconstruct where the asset/form was SUPPOSED to go
+        const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
+        const newProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+
+        if (event.request.mode === 'navigate') {
+          // If it's a page navigation (like hitting Enter on a DDG search), redirect the URL bar
+          remoteLog(`[SW] 🧭 Recovered Navigation: Redirecting to ${intendedTarget}`);
+          return event.respondWith(Response.redirect(newProxyUrl, 301));
+        } else {
+          // If it's an asset (like the Wikipedia globe), fetch it quietly behind the scenes
+          remoteLog(`[SW] 🩹 Recovered Asset: ${intendedTarget}`);
+          const proxyReq = new Request(newProxyUrl, event.request);
+          return event.respondWith(handleProxyRequest(event, proxyReq, new URL(newProxyUrl)));
+        }
+      } catch (e) {
+        remoteLog(`[SW] Recovery failed: ${e.message}`);
+      }
+    }
+  }
+
+  // --- 3. STANDARD PROXY PASS ---
   event.respondWith(handleProxyRequest(event, event.request, url));
 });
 
