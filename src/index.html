@@ -123,6 +123,24 @@
   tabindex="0"
   id="frame"></iframe>
 
+  <button id="settings-toggle" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; padding: 10px; cursor: pointer;">⚙️ Settings</button>
+
+  <div id="settings-panel" style="display: none; position: fixed; bottom: 60px; right: 20px; background: #222; color: #fff; padding: 20px; border-radius: 8px; font-family: sans-serif; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+    <h3 style="margin-top: 0;">Proxy Settings</h3>
+  
+    <label style="display: block; margin-bottom: 10px;">
+      <input type="checkbox" id="setting-debug-logs" checked>
+      Enable Debug Logging
+    </label>
+  
+    <label style="display: block; margin-bottom: 10px;">
+      Backend URL:
+      <input type="text" id="setting-backend-url" style="width: 100%; margin-top: 5px; padding: 5px;">
+    </label>
+
+    <button id="settings-save" style="margin-top: 10px; padding: 5px 10px; cursor: pointer;">Save & Apply</button>
+  </div>
+
   <script>
     // --- 1. Logging Engine ---
     // Suggestion 4: Targeted logging instead of overriding standard console.log
