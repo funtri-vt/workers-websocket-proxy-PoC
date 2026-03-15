@@ -2,7 +2,7 @@
 let config = {
   debugLogs: true,
   backendUrl: self.location.origin,
-  password: ""
+  password: "1234"
 };
 
 // Force SW to take control immediately
