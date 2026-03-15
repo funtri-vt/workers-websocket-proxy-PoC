@@ -258,7 +258,8 @@
 
     // --- 2. Service Worker Bridge ---
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js', { scope: '/service/' })
+      // The ?v= timestamp forces Chrome to bypass the disk cache every single time the page loads
+      navigator.serviceWorker.register('/sw.js?v=' + new Date().getTime(), { scope: '/service/' })
         .then(() => proxyLog('System', 'Service Worker registered with scoped access.'))
         .catch(err => proxyLog('System Error', `SW Registration failed: ${err}`));
 
