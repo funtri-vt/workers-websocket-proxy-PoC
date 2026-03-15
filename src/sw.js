@@ -101,7 +101,27 @@ self.addEventListener('fetch', event => {
                         url.pathname !== '/sw.js' &&
                         (isProxiedReferrer || ['image', 'script', 'style', 'font', 'manifest'].includes(dest));
 
-  const currentOrigin = getBaseOrigin(event);
+  // --- Replacement for getBaseOrigin (Line 104) ---
+  let currentOrigin = '';
+  const referer = event.request.referrer;
+
+  if (referer && referer.includes('/service/')) {
+    try {
+      // Extract the proxied site from the referrer URL
+      // Example: .../service/https://wikipedia.org/wiki/Main_Page -> https://wikipedia.org
+      const parts = referer.split('/service/');
+      const fullTarget = decodeURIComponent(parts[1]);
+      currentOrigin = new URL(fullTarget).origin;
+    } catch (e) {
+      remoteLog(`[SW] ⚠️ Failed to resolve origin from referrer: ${referer}`);
+    }
+  }
+
+  // Now use currentOrigin to resolve the relative path
+  if (currentOrigin && !targetUrl.startsWith('http')) {
+    targetUrl = new URL(url.pathname + url.search, currentOrigin).toString();
+  }
+  // -----------------------------------------------
   if (isLeakedAsset && currentOrigin) {
     try {
       let baseDomain = currentOrigin;
