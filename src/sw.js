@@ -5,12 +5,15 @@ let config = {
   password: ""
 };
 
-// Listen for settings updates from the main page
-self.addEventListener('message', event => {
+// Force SW to take control immediately
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+
+// Listen for settings updates from the UI
+self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'UPDATE_SETTINGS') {
-    config = event.data.payload;
-    // We bypass remoteLog here just in case logging was just turned off!
-    console.log("[SW] Settings updated:", config); 
+    config = { ...config, ...event.data.payload };
+    console.log("[SW] ⚙️ Internal config updated:", config);
   }
 });
 
@@ -182,7 +185,7 @@ async function handleProxyRequest(request, url) {
     try {
       const wsUrl = new URL('/ws/', config.backendUrl);
       
-      // Inject the password into the query string
+      // Attach the password!
       if (config.password) {
         wsUrl.searchParams.set("token", config.password);
       }
