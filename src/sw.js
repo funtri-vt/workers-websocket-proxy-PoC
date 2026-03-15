@@ -90,41 +90,36 @@ function remoteLog(msg) {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
+  const referer = event.request.referrer;
+  const isFromProxy = referer && referer.includes('/service/');
 
-  // --- 1. SYSTEM BYPASS ---
-  if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
-    return; 
-  }
-
-  // --- 2. LEAKED ASSET & FORM RECOVERY (Fixes Baby Globe & DuckDuckGo) ---
-  // If a request hits our domain without the /service/ prefix, it "leaked"
-  if (!url.pathname.startsWith('/service/')) {
-    const referer = event.request.referrer;
-    
-    if (referer && referer.includes('/service/')) {
+  // --- 1. THE ULTIMATE LEAK RECOVERY (Fixes DDG & Baby Globe) ---
+  // If a request hits our domain natively BUT came from a proxied page, it escaped.
+  if (!url.pathname.startsWith('/service/') && isFromProxy) {
+    // Only exclude the absolute core system files from recovery
+    if (url.pathname !== '/sw.js' && !url.pathname.startsWith('/ws/') && !url.pathname.startsWith('/proxy-ws/')) {
       try {
-        // Extract the original target domain from the referrer
         const parts = referer.split('/service/');
         const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
         
-        // Reconstruct where the asset/form was SUPPOSED to go
+        // Rebuild the URL to point to the actual target (e.g., duckduckgo.com/?q=cats)
         const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
-        const newProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+        const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
 
-        if (event.request.mode === 'navigate') {
-          // If it's a page navigation (like hitting Enter on a DDG search), redirect the URL bar
-          remoteLog(`[SW] 🧭 Recovered Navigation: Redirecting to ${intendedTarget}`);
-          return event.respondWith(Response.redirect(newProxyUrl, 301));
-        } else {
-          // If it's an asset (like the Wikipedia globe), fetch it quietly behind the scenes
-          remoteLog(`[SW] 🩹 Recovered Asset: ${intendedTarget}`);
-          const proxyReq = new Request(newProxyUrl, event.request);
-          return event.respondWith(handleProxyRequest(event, proxyReq, new URL(newProxyUrl)));
-        }
+        remoteLog(`[SW] 🛟 Rescued leaked request: ${url.pathname} -> ${safeProxyUrl}`);
+        
+        // Instantly redirect the browser back into the proxy tunnel
+        return event.respondWith(Response.redirect(safeProxyUrl, 301));
       } catch (e) {
-        remoteLog(`[SW] Recovery failed: ${e.message}`);
+        remoteLog(`[SW] Recovery parsing failed: ${e.message}`);
       }
     }
+  }
+
+  // --- 2. SYSTEM BYPASS ---
+  // Let the main UI and WebSockets load normally (Now protected by the logic above)
+  if ((url.pathname === '/' && url.search === '') || url.pathname === '/index.html' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
+    return; 
   }
 
   // --- 3. STANDARD PROXY PASS ---
