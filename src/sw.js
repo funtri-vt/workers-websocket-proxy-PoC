@@ -1,3 +1,21 @@
+// Default settings inside the SW
+let config = {
+  debugLogs: true,
+  backendUrl: self.location.origin,
+  password: ""
+};
+
+// Listen for settings updates from the main page
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'UPDATE_SETTINGS') {
+    config = event.data.payload;
+    // We bypass remoteLog here just in case logging was just turned off!
+    console.log("[SW] Settings updated:", config); 
+  }
+});
+
+
+
 // --------------------------------------------------------
 // Persistent Cookie Storage (IndexedDB)
 // --------------------------------------------------------
@@ -61,6 +79,8 @@ self.addEventListener('activate', event => {
 });
 
 function remoteLog(msg) {
+  if (!config.debugLogs) return; // Mute logs if disabled!
+  
   console.log(msg); 
   self.clients.matchAll({ includeUncontrolled: true }).then(clients => {
     clients.forEach(client => client.postMessage({ type: 'sw-log', message: msg }));
@@ -160,10 +180,16 @@ async function handleProxyRequest(request, url) {
 
   return new Promise((resolve) => {
     try {
-      const wsUrl = new URL('/ws/', location.origin);
-      wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = new URL('/ws/', config.backendUrl);
       
-      remoteLog(`[SW] Opening WebSocket to Backend...`);
+      // Inject the password into the query string
+      if (config.password) {
+        wsUrl.searchParams.set("token", config.password);
+      }
+      
+      wsUrl.protocol = wsUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+      
+      remoteLog(`[SW] Opening WebSocket to Backend at ${wsUrl.origin}...`);
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";
       

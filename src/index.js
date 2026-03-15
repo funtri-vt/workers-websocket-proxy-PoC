@@ -34,13 +34,23 @@ export default {
 				return new Response("Expected WebSocket", { status: 426 });
 			}
 
-			// Origin Lock-down
-			const expectedOrigin = url.origin;
-			const clientOrigin = request.headers.get("Origin");
-			if (clientOrigin && clientOrigin !== expectedOrigin) {
-				console.warn(`[Security] Blocked unauthorized WS connection from: ${clientOrigin}`);
-				return new Response("Forbidden: Invalid Origin", { status: 403 });
-			}
+			// Token-based Security Lock-down
+    		const clientToken = url.searchParams.get("token");
+				
+    		// Pull the password from Cloudflare's secure environment variables
+    		const EXPECTED_TOKEN = env.PROXY_PASSWORD; 
+				
+    		// Safety check: Make sure you actually set the variable, 
+    		// otherwise it locks everyone out (including you!)
+    		if (!EXPECTED_TOKEN) {
+    		  console.error("[Security] PROXY_PASSWORD environment variable is missing!");
+    		  return new Response("Server Configuration Error", { status: 500 });
+    		}
+		
+    		if (clientToken !== EXPECTED_TOKEN) {
+    		  console.warn(`[Security] Blocked unauthorized connection. Invalid token.`);
+    		  return new Response("Forbidden: Invalid/Missing Token", { status: 403 });
+    		}
 
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();

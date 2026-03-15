@@ -138,7 +138,14 @@
       <input type="text" id="setting-backend-url" style="width: 100%; margin-top: 5px; padding: 5px;">
     </label>
 
+    <label style="display: block; margin-bottom: 10px;">
+      Proxy Password:
+      <input type="password" id="setting-password" style="width: 100%; margin-top: 5px; padding: 5px;">
+    </label>
+
     <button id="settings-save" style="margin-top: 10px; padding: 5px 10px; cursor: pointer;">Save & Apply</button>
+    <button id="settings-reset" style="margin-top: 10px; margin-left: 10px; padding: 5px 10px; cursor: pointer; background: #666; color: #fff; border: 1px solid #444; border-radius: 3px;">Reset to Defaults</button>
+    
   </div>
 
   <script>
@@ -150,12 +157,16 @@
     const backendInput = document.getElementById("setting-backend-url");
     // Load saved settings (or defaults)
     const loadSettings = () => {
+      // In loadSettings(), add the default:
       const settings = JSON.parse(localStorage.getItem("proxySettings")) || {
         debugLogs: true,
-        backendUrl: window.location.origin // Default to current host
+        backendUrl: window.location.origin,
+        password: "" // New default
       };
+      passInput.value = settings.password; // Set UI
       logToggle.checked = settings.debugLogs;
       backendInput.value = settings.backendUrl;
+      
       return settings;
     };
     
@@ -182,14 +193,43 @@
     saveBtn.addEventListener("click", () => {
       const newSettings = {
         debugLogs: logToggle.checked,
-        backendUrl: backendInput.value.trim()
+        backendUrl: backendInput.value.trim(),
+        password: passInput.value.trim() // Capture password
       };
       localStorage.setItem("proxySettings", JSON.stringify(newSettings));
       syncWithServiceWorker(newSettings);
       panel.style.display = "none";
       console.log("Settings saved!", newSettings);
+      });
     });
-  });
+
+    const resetBtn = document.getElementById("settings-reset");
+
+    // Define the rock-solid defaults
+    const DEFAULT_SETTINGS = {
+      debugLogs: true,
+      backendUrl: window.location.origin,
+      password: ""
+    };
+
+    resetBtn.addEventListener("click", () => {
+      // 1. Overwrite localStorage with defaults
+      localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
+    
+      // 2. Visually update the UI toggles/inputs to match
+      logToggle.checked = DEFAULT_SETTINGS.debugLogs;
+      backendInput.value = DEFAULT_SETTINGS.backendUrl;
+    
+      // 3. Beam the reset config instantly to the Service Worker
+      syncWithServiceWorker(DEFAULT_SETTINGS);
+    
+      console.log("Settings safely reset to defaults!", DEFAULT_SETTINGS);
+    
+      // Optional: Give the user some quick feedback
+      alert("Settings have been reset to default values.");
+    });
+
+    
     // --- 1. Logging Engine ---
     // Suggestion 4: Targeted logging instead of overriding standard console.log
     window.appLogs = [];
