@@ -244,17 +244,27 @@ export default {
 									// For heavy binary files (images, css, videos), stream them with backpressure
 									const reader = res.body.getReader();
 									try {
+										let backpressureWait = 0;
 										while (true) {
 											if (server.readyState !== 1) {
 												await reader.cancel("Client disconnected");
 												break;
 											}
 
-											// Backpressure valve prevents OOM crashes on huge files
+											// Backpressure valve with a Deadlock Timeout
 											while (server.bufferedAmount > 1024 * 1024) {
 												await new Promise(resolve => setTimeout(resolve, 10));
-												if (server.readyState !== 1) break;
+												backpressureWait++;
+												
+												// If frozen for ~5 seconds, assume dead connection and abort
+												if (server.readyState !== 1 || backpressureWait > 500) {
+													await reader.cancel("Connection deadlocked");
+													try { server.close(); } catch(e) {}
+													break;
+												}
 											}
+											backpressureWait = 0; // Reset after healthy drain
+											if (server.readyState !== 1) break;
 
 											const { done, value } = await reader.read();
 											if (done) break;
@@ -266,10 +276,12 @@ export default {
 												break;
 											}
 										}
+									} catch (streamErr) {
+										// Catch any native stream errors and cancel cleanly
+										try { await reader.cancel("Stream error"); } catch(e) {}
 									} finally {
 										reader.releaseLock();
 									}
-								}
 								
 								safeSend(JSON.stringify({ type: "end" }));
 
@@ -327,6 +339,10 @@ export default {
 			}
 
 			if (targetResponse.status !== 101 || !targetResponse.webSocket) {
+				// FIX: Cancel the unread body to prevent the Worker from hanging!
+				if (targetResponse.body) {
+					try { await targetResponse.body.cancel(); } catch (e) {}
+				}
 				return new Response("Backend refused connection", { status: 502 });
 			}
 			
@@ -336,11 +352,11 @@ export default {
 			targetSocket.accept();
 			
 			serverSocket.addEventListener("message", event => {
-				targetSocket.send(event.data);
+				try { targetSocket.send(event.data); } catch (e) {}
 			});
 			
 			targetSocket.addEventListener("message", event => {
-				serverSocket.send(event.data);
+				try { serverSocket.send(event.data); } catch (e) {}
 			});
 
 			const closeBoth = () => {
