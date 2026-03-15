@@ -149,91 +149,6 @@
   </div>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      const panel = document.getElementById("settings-panel");
-      const toggleBtn = document.getElementById("settings-toggle");
-      const saveBtn = document.getElementById("settings-save");
-      const resetBtn = document.getElementById("settings-reset"); // Moved inside!
-      
-      const logToggle = document.getElementById("setting-debug-logs");
-      const backendInput = document.getElementById("setting-backend-url");
-      const passInput = document.getElementById("setting-password"); // Added missing definition!
-
-      // Load saved settings (or defaults)
-      const loadSettings = () => {
-        const settings = JSON.parse(localStorage.getItem("proxySettings")) || {
-          debugLogs: true,
-          backendUrl: window.location.origin,
-          password: "" 
-        };
-        
-        passInput.value = settings.password; 
-        logToggle.checked = settings.debugLogs;
-        backendInput.value = settings.backendUrl;
-        
-        return settings;
-      };
-      
-      const syncWithServiceWorker = (settings) => {
-        navigator.serviceWorker.ready.then((registration) => {
-          if (registration.active) {
-            registration.active.postMessage({
-              type: 'UPDATE_SETTINGS',
-              payload: settings
-            });
-            console.log("📡 Sent settings to SW:", settings);
-          }
-        });
-      };
-    
-      // Initialize
-      let currentSettings = loadSettings();
-      // Wait a brief moment for SW to be ready, then sync
-      navigator.serviceWorker.ready.then(() => syncWithServiceWorker(currentSettings));
-    
-      // UI Event Listeners
-      toggleBtn.addEventListener("click", () => {
-        panel.style.display = panel.style.display === "none" ? "block" : "none";
-      });
-    
-      saveBtn.addEventListener("click", () => {
-        const newSettings = {
-          debugLogs: logToggle.checked,
-          backendUrl: backendInput.value.trim(),
-          password: passInput.value.trim() 
-        };
-        localStorage.setItem("proxySettings", JSON.stringify(newSettings));
-        syncWithServiceWorker(newSettings);
-        panel.style.display = "none";
-        console.log("Settings saved!", newSettings);
-      });
-
-      // Define the rock-solid defaults
-      const DEFAULT_SETTINGS = {
-        debugLogs: true,
-        backendUrl: window.location.origin,
-        password: ""
-      };
-
-      resetBtn.addEventListener("click", () => {
-        // 1. Overwrite localStorage with defaults
-        localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
-      
-        // 2. Visually update the UI toggles/inputs to match
-        logToggle.checked = DEFAULT_SETTINGS.debugLogs;
-        backendInput.value = DEFAULT_SETTINGS.backendUrl;
-        passInput.value = DEFAULT_SETTINGS.password; // Added this so the UI clears the password!
-      
-        // 3. Beam the reset config instantly to the Service Worker
-        syncWithServiceWorker(DEFAULT_SETTINGS);
-      
-        console.log("Settings safely reset to defaults!", DEFAULT_SETTINGS);
-        alert("Settings have been reset to default values.");
-      });
-
-    }); // <--- DOMContentLoaded correctly closes here now!
-
-    
     // --- 1. Logging Engine ---
     window.appLogs = [];
     function proxyLog(source, message) {
@@ -256,10 +171,88 @@
       URL.revokeObjectURL(url);
     });
 
-    // --- 2. Service Worker Bridge ---
+    // --- 2. State Management & SW Bridge (Global Scope) ---
+    // Load saved settings from one unified source of truth
+    const loadSettings = () => {
+      return JSON.parse(localStorage.getItem("proxySettings")) || {
+        debugLogs: true,
+        backendUrl: window.location.origin,
+        password: "" 
+      };
+    };
+
+    // The Bridge function
+    const syncWithServiceWorker = (settings) => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.ready.then((registration) => {
+          if (registration.active) {
+            registration.active.postMessage({
+              type: 'UPDATE_SETTINGS',
+              payload: settings
+            });
+            console.log("📡 Reminded SW of settings:", settings);
+          }
+        });
+      }
+    };
+
+    // --- 3. UI & Initialization ---
+    document.addEventListener("DOMContentLoaded", () => {
+      const panel = document.getElementById("settings-panel");
+      const toggleBtn = document.getElementById("settings-toggle");
+      const saveBtn = document.getElementById("settings-save");
+      const resetBtn = document.getElementById("settings-reset"); 
+      
+      const logToggle = document.getElementById("setting-debug-logs");
+      const backendInput = document.getElementById("setting-backend-url");
+      const passInput = document.getElementById("setting-password");
+
+      // Initialize UI with saved settings
+      let currentSettings = loadSettings();
+      passInput.value = currentSettings.password; 
+      logToggle.checked = currentSettings.debugLogs;
+      backendInput.value = currentSettings.backendUrl;
+
+      // WAKE UP CALL #1: Beam settings to SW the moment the page loads
+      navigator.serviceWorker.ready.then(() => syncWithServiceWorker(currentSettings));
+
+      // UI Event Listeners
+      toggleBtn.addEventListener("click", () => {
+        panel.style.display = panel.style.display === "none" ? "block" : "none";
+      });
+      
+      saveBtn.addEventListener("click", () => {
+        const newSettings = {
+          debugLogs: logToggle.checked,
+          backendUrl: backendInput.value.trim(),
+          password: passInput.value.trim() 
+        };
+        localStorage.setItem("proxySettings", JSON.stringify(newSettings));
+        syncWithServiceWorker(newSettings);
+        panel.style.display = "none";
+        alert("Settings saved!");
+        proxyLog('System', "Settings saved & sent to SW.");
+      });
+
+      const DEFAULT_SETTINGS = {
+        debugLogs: true,
+        backendUrl: window.location.origin,
+        password: ""
+      };
+
+      resetBtn.addEventListener("click", () => {
+        localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
+        logToggle.checked = DEFAULT_SETTINGS.debugLogs;
+        backendInput.value = DEFAULT_SETTINGS.backendUrl;
+        passInput.value = DEFAULT_SETTINGS.password; 
+        syncWithServiceWorker(DEFAULT_SETTINGS);
+        alert("Settings have been reset to default values.");
+      });
+    });
+
+    // --- 4. Service Worker Registration ---
     if ('serviceWorker' in navigator) {
-      // The ?v= timestamp forces Chrome to bypass the disk cache every single time the page loads
-      navigator.serviceWorker.register('/sw.js?v=SUPER_NUKE_1', { scope: '/service/' })
+      navigator.serviceWorker.register('/sw.js?v=FINAL_BRIDGE', { scope: '/service/' })
         .then(() => proxyLog('System', 'Service Worker registered with scoped access.'))
         .catch(err => proxyLog('System Error', `SW Registration failed: ${err}`));
 
@@ -270,8 +263,12 @@
       });
     }
 
-    // --- 3. Routing Engine ---
+    // --- 5. Routing Engine ---
     function loadUrl() {
+      // WAKE UP CALL #2: Remind SW of the password right before fetching!
+      const currentSettings = loadSettings();
+      syncWithServiceWorker(currentSettings);
+
       const input = document.getElementById('url-input').value.trim();
       if (!input) return;
       const frame = document.getElementById('frame');
@@ -284,14 +281,12 @@
       if (e.key === 'Enter') loadUrl();
     });
 
-    // --- 4. Eruda DevTools Injector ---
+    // --- 6. Eruda DevTools Injector ---
     (function () {
       if (!/eruda=true/.test(window.location.search) && localStorage.getItem('active-eruda') !== 'true') return;
       var script = document.createElement('script');
-      
       script.src = 'https://cdn.jsdelivr.net/npm/eruda';
       script.crossOrigin = 'anonymous';
-      
       script.onload = function () { 
         eruda.init(); 
         proxyLog('System', 'Eruda DevTools injected successfully.');
