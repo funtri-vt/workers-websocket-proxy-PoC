@@ -95,27 +95,40 @@ self.addEventListener('fetch', event => {
   const isProxied = referrer && referrer.includes('/service/');
 
   // 1. The Detective (MUST come first)
-  // Catch requests that escaped the /service/ prefix
-  if (!url.pathname.startsWith('/service/') && isProxied) {
+  // This catches requests that try to hit your root domain instead of the /service/ path
+  const isEscape = !url.pathname.startsWith('/service/') && 
+                   !url.pathname.startsWith('/ws/') && 
+                   url.pathname !== '/sw.js' && 
+                   !(url.pathname === '/' && url.search === '');
+
+  
+  // Add a check for the Referer to be extra safe
+  const isReferrerProxied = referrer && referrer.includes('/service/');
+  if (isEscape && (isProxied || activeProxyOrigin)) {
     try {
-      const refUrl = new URL(referrer);
-      // Extract the target site we were currently on
-      const originalTarget = decodeURIComponent(refUrl.pathname.substring(refUrl.pathname.indexOf('/service/') + 9));
-      const baseDomain = new URL(originalTarget).origin;
+      let baseDomain = activeProxyOrigin;
       
-      // Stitch it together: base + /path + ?query
+      if (isProxied) {
+        const refUrl = new URL(referrer);
+        const path = refUrl.pathname;
+        const serviceIdx = path.indexOf('/service/');
+        // Extract the target site from the referrer URL
+        const rawTarget = path.substring(serviceIdx + 9);
+        baseDomain = new URL(decodeURIComponent(rawTarget)).origin;
+      }
+
+      // Reconstruct the intended URL and force it back into the /service/ tunnel
       const targetUrlStr = baseDomain + url.pathname + url.search;
       const proxyUrl = new URL(url.origin + '/service/' + encodeURIComponent(targetUrlStr));
       
-      console.log(`[SW Detective] Intercepted Escape: ${url.pathname} -> ${targetUrlStr}`);
+      console.log(`[SW Detective] Re-routing Escape: ${url.pathname} -> ${targetUrlStr}`);
       return event.respondWith(handleProxyRequest(event.request, proxyUrl));
     } catch (e) {
-      console.error("[SW Detective] Failed to redirect escape:", e);
+      console.warn("[SW Detective] Resolution failed, falling through...");
     }
   }
 
   // 2. System Bypass
-  // Only let the UI/WS through if they AREN'T part of a proxy session
   if (url.pathname === '/' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/')) {
     return; 
   }
@@ -129,9 +142,7 @@ async function handleProxyRequest(request, url) {
   const isDocument = request.destination === 'document' || request.destination === 'iframe';
 
   if (targetUrl.startsWith('/service/')) {
-    let innerUrl = decodeURIComponent(targetUrl.replace('/service/', ''));
-    innerUrl = innerUrl.replace(/&amp;/g, '&');
-    
+    let innerUrl = decodeURIComponent(targetUrl.replace('/service/', '')).replace(/&amp;/g, '&');    
     if (!/^https?:\/\//i.test(innerUrl)) {
       const referer = request.referrer;
       if (referer && referer.includes('/service/') && !isDocument) {
@@ -152,11 +163,6 @@ async function handleProxyRequest(request, url) {
       targetUrl = innerUrl;
     }
     
-    if (isDocument) {
-      try { 
-          activeProxyOrigin = new URL(targetUrl).origin; 
-      } catch(e) {}
-    }
   } 
   else {
     targetUrl = targetUrl.replace(/&amp;/g, '&');
@@ -183,7 +189,11 @@ async function handleProxyRequest(request, url) {
       }
     }
   }
-
+  if (isDocument) {
+      try { 
+          activeProxyOrigin = new URL(targetUrl).origin; 
+      } catch(e) {}
+    }
   remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
 
   // --- SECURITY FIX 3: Hostname-specific Ad Blocking ---

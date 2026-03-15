@@ -159,22 +159,25 @@ export default {
 									        const prefix = "${targetDomain}:";
 									        const PROXY_BASE = window.location.origin + '/service/';
 									        const TARGET_BASE = "${baseUrl}";
+									        const TARGET_ORIGIN = new URL(TARGET_BASE).origin;
 									
-									        // URL Traffic Controller: Keeps everything inside the proxy tunnel
+									        // URL Traffic Controller: The brain of the proxy
 									        function resolveUrl(url) {
 									          if (!url || typeof url !== 'string') return url;
 									          if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(PROXY_BASE)) return url;
 									
+									          let finalUrl = url;
+									          if (url.startsWith('//')) finalUrl = window.location.protocol + url;
+									
 									          try {
-									            // Resolves relative paths (like "?query") against the current page URL
-									            const absolute = new URL(url, TARGET_BASE).toString();
+									            const absolute = new URL(finalUrl, TARGET_BASE).toString();
 									            return PROXY_BASE + encodeURIComponent(absolute);
 									          } catch (e) {
 									            return url;
 									          }
 									        }
 									
-									        // --- 1. Advanced Storage Spoofing (Your Original Logic) ---
+									        // --- 1. Advanced Storage Spoofing ---
 									        const makeProxy = (real) => new Proxy(real, {
 									          get(target, prop) {
 									            if (prop === 'getItem') return (k) => target.getItem(prefix + k);
@@ -189,17 +192,41 @@ export default {
 									            return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
 									          }
 									        });
-
+									
 									        try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
 									        try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
-
-									        // --- 2. Focus & Frame Escape Prevention (Your Original Logic) ---
+									
+									        // --- 2. Focus & Frame Escape Prevention ---
 									        try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
 									        try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
-
-									        // --- 3. API Hooking (New: Fixes DuckDuckGo & Background Fetch) ---
-
-									        // Hook Fetch
+									
+									        // --- 3. Active Interception (New: Fixes dynamic SPAs like DuckDuckGo) ---
+									
+									        // Hook setAttribute for dynamic elements
+									        const orgSetAttribute = Element.prototype.setAttribute;
+									        Element.prototype.setAttribute = function(name, value) {
+									          if (['src', 'href', 'action'].includes(name.toLowerCase())) {
+									            value = resolveUrl(value);
+									          }
+									          return orgSetAttribute.apply(this, [name, value]);
+									        };
+									
+									        // Hook property setters (e.g., img.src = "/path")
+									        const hookProp = (proto, prop) => {
+									          const desc = Object.getOwnPropertyDescriptor(proto, prop);
+									          if (desc && desc.set) {
+									            const orgSet = desc.set;
+									            Object.defineProperty(proto, prop, {
+									              set: function(v) { return orgSet.apply(this, [resolveUrl(v)]); }
+									            });
+									          }
+									        };
+									        if (window.HTMLImageElement) hookProp(HTMLImageElement.prototype, 'src');
+									        if (window.HTMLAnchorElement) hookProp(HTMLAnchorElement.prototype, 'href');
+									        if (window.HTMLFormElement) hookProp(HTMLFormElement.prototype, 'action');
+									        if (window.HTMLScriptElement) hookProp(HTMLScriptElement.prototype, 'src');
+									
+									        // --- 4. API Hooking (Fetch/XHR/Window) ---
 									        const oldFetch = window.fetch;
 									        window.fetch = function(input, init) {
 									          if (typeof input === 'string') input = resolveUrl(input);
@@ -208,56 +235,47 @@ export default {
 									          }
 									          return oldFetch(input, init);
 									        };
-
-									        // Hook XHR (Legacy requests)
+									
 									        const oldOpen = XMLHttpRequest.prototype.open;
 									        XMLHttpRequest.prototype.open = function(method, url, ...args) {
 									          return oldOpen.apply(this, [method, resolveUrl(url), ...args]);
 									        };
-
-									        // Hook Window.open (Fixes links opening in new tabs)
+									
 									        const oldWindowOpen = window.open;
 									        window.open = function(url, ...args) {
 									          return oldWindowOpen.apply(window, [resolveUrl(url), ...args]);
 									        };
-
-									        // --- 4. Stateless WebSocket Interceptor (Your Logic + resolveUrl) ---
+									
+									        // --- 5. Stateless WebSocket Interceptor ---
 									        const OriginalWebSocket = window.WebSocket;
 									        window.WebSocket = function(url, protocols) {
 									          if (typeof url === 'string' && url.includes('/ws/')) {
 									            return new OriginalWebSocket(url, protocols);
 									          }
-
-									          // Use resolveUrl logic to get the full absolute target URL first
 									          const absoluteTarget = new URL(url, TARGET_BASE).toString();
 									          const targetUrl = encodeURIComponent(absoluteTarget);
 									          const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/proxy-ws/?target=' + targetUrl;
-
+									
 									          return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
 									        };
-
 									        window.WebSocket.prototype = OriginalWebSocket.prototype;
 									        Object.assign(window.WebSocket, OriginalWebSocket);
+									
+									        // --- 6. History API Hooking (The Cage) ---
+									        const oldPushState = window.history.pushState;
+									        window.history.pushState = function(state, title, url) {
+									            return oldPushState.apply(window.history, [state, title, resolveUrl(url)]);
+									        };
+									        const oldReplaceState = window.history.replaceState;
+									        window.history.replaceState = function(state, title, url) {
+									            return oldReplaceState.apply(window.history, [state, title, resolveUrl(url)]);
+									        };
+									
+									        // --- 7. Location Guarding ---
+									        try {
+									            Object.defineProperty(window, '__proxyLocation', { value: new URL(TARGET_BASE) });
+									        } catch(e) {}
 									      })();
-										  
-										  // --- 5. History API Hooking (The Cage) ---
-										  // Prevents the site from changing the URL of your actual browser tab
-										  const oldPushState = window.history.pushState;
-										  window.history.pushState = function(state, title, url) {
-										      return oldPushState.apply(window.history, [state, title, resolveUrl(url)]);
-										  };
-										  
-										  const oldReplaceState = window.history.replaceState;
-										  window.history.replaceState = function(state, title, url) {
-										      return oldReplaceState.apply(window.history, [state, title, resolveUrl(url)]);
-										  };
-										  
-										  // --- 6. Location Guarding (Passive) ---
-										  // If the site tries to read window.location.href, we give it the fake one
-										  try {
-										      const originalLocation = window.location.href;
-										      Object.defineProperty(window, '__proxyLocation', { value: new URL(TARGET_BASE) });
-										  } catch(e) {}
 									    </script>`;
 									    element.prepend(script, { html: true });
 									  }
