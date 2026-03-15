@@ -151,55 +151,98 @@ export default {
 									const baseUrl = msg.url; 
 
 									class ScriptInjector {
-										element(element) {
-											const script = `
-											<script>
-												(function() {
-													// 1. Advanced Storage Spoofing
-													const prefix = "${targetDomain}:";
-													const makeProxy = (real) => new Proxy(real, {
-														get(target, prop) {
-															if (prop === 'getItem') return (k) => target.getItem(prefix + k);
-															if (prop === 'setItem') return (k, v) => target.setItem(prefix + k, v);
-															if (prop === 'removeItem') return (k) => target.removeItem(prefix + k);
-															if (prop === 'clear') return () => {
-																for (let i = target.length - 1; i >= 0; i--) {
-																	const key = target.key(i);
-																	if (key && key.startsWith(prefix)) target.removeItem(key);
-																}
-															};
-															return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
-														}
-													});
-													
-													try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
-													try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
-
-													// 2. Fix Keyboard Focus / Event Listener Crashes
-													try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
-													try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
-													
-													// 3. Stateless WebSocket Interceptor
-													const OriginalWebSocket = window.WebSocket;
-													window.WebSocket = function(url, protocols) {
-														if (typeof url === 'string' && url.includes('/ws/')) {
-															return new OriginalWebSocket(url, protocols);
-														}
-														
-														const targetUrl = encodeURIComponent(url);
-														const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/proxy-ws/?target=' + targetUrl;
-														
-														return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
-													};
-													
-													window.WebSocket.prototype = OriginalWebSocket.prototype;
-													Object.assign(window.WebSocket, OriginalWebSocket);
-												})();
-											</script>`;
-											element.prepend(script, { html: true });
-										}
+									  element(element) {
+									    const script = `
+									    <script>
+									      (function() {
+									        // --- 0. Configuration ---
+									        const prefix = "${targetDomain}:";
+									        const PROXY_BASE = window.location.origin + '/service/';
+									        const TARGET_BASE = "${baseUrl}";
+									
+									        // URL Traffic Controller: Keeps everything inside the proxy tunnel
+									        function resolveUrl(url) {
+									          if (!url || typeof url !== 'string') return url;
+									          if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(PROXY_BASE)) return url;
+									
+									          try {
+									            // Resolves relative paths (like "?query") against the current page URL
+									            const absolute = new URL(url, TARGET_BASE).toString();
+									            return PROXY_BASE + encodeURIComponent(absolute);
+									          } catch (e) {
+									            return url;
+									          }
+									        }
+									
+									        // --- 1. Advanced Storage Spoofing (Your Original Logic) ---
+									        const makeProxy = (real) => new Proxy(real, {
+									          get(target, prop) {
+									            if (prop === 'getItem') return (k) => target.getItem(prefix + k);
+									            if (prop === 'setItem') return (k, v) => target.setItem(prefix + k, v);
+									            if (prop === 'removeItem') return (k) => target.removeItem(prefix + k);
+									            if (prop === 'clear') return () => {
+									              for (let i = target.length - 1; i >= 0; i--) {
+									                const key = target.key(i);
+									                if (key && key.startsWith(prefix)) target.removeItem(key);
+									              }
+									            };
+									            return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
+									          }
+									        });
+			
+									        try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
+									        try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
+			
+									        // --- 2. Focus & Frame Escape Prevention (Your Original Logic) ---
+									        try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
+									        try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
+			
+									        // --- 3. API Hooking (New: Fixes DuckDuckGo & Background Fetch) ---
+			
+									        // Hook Fetch
+									        const oldFetch = window.fetch;
+									        window.fetch = function(input, init) {
+									          if (typeof input === 'string') input = resolveUrl(input);
+									          else if (input instanceof Request) {
+									            return oldFetch(new Request(resolveUrl(input.url), input), init);
+									          }
+									          return oldFetch(input, init);
+									        };
+			
+									        // Hook XHR (Legacy requests)
+									        const oldOpen = XMLHttpRequest.prototype.open;
+									        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+									          return oldOpen.apply(this, [method, resolveUrl(url), ...args]);
+									        };
+			
+									        // Hook Window.open (Fixes links opening in new tabs)
+									        const oldWindowOpen = window.open;
+									        window.open = function(url, ...args) {
+									          return oldWindowOpen.apply(window, [resolveUrl(url), ...args]);
+									        };
+			
+									        // --- 4. Stateless WebSocket Interceptor (Your Logic + resolveUrl) ---
+									        const OriginalWebSocket = window.WebSocket;
+									        window.WebSocket = function(url, protocols) {
+									          if (typeof url === 'string' && url.includes('/ws/')) {
+									            return new OriginalWebSocket(url, protocols);
+									          }
+			
+									          // Use resolveUrl logic to get the full absolute target URL first
+									          const absoluteTarget = new URL(url, TARGET_BASE).toString();
+									          const targetUrl = encodeURIComponent(absoluteTarget);
+									          const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/proxy-ws/?target=' + targetUrl;
+			
+									          return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
+									        };
+			
+									        window.WebSocket.prototype = OriginalWebSocket.prototype;
+									        Object.assign(window.WebSocket, OriginalWebSocket);
+									      })();
+									    </script>`;
+									    element.prepend(script, { html: true });
+									  }
 									}
-
 									class AttributeRewriter {
 										constructor(attributeName) {
 											this.attributeName = attributeName;
