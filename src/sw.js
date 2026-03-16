@@ -35,11 +35,11 @@ self.addEventListener('fetch', event => {
                 const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
                 const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
                 
+                console.log(`[SW] 🩹 Rescuing leaked asset: ${url.pathname} -> ${intendedTarget}`);
+
                 if (event.request.mode === 'navigate') {
-                    // Redirect address bar for forms (DDG)
                     return event.respondWith(Response.redirect(safeProxyUrl, 301));
                 } else {
-                    // Fetch quietly for missing assets
                     const proxyReq = new Request(safeProxyUrl, event.request);
                     return event.respondWith(handleProxyRequest(proxyReq));
                 }
@@ -107,7 +107,24 @@ async function handleProxyRequest(request) {
                     
                     if (msg.type === 'response') {
                         console.log(`[SW] 🟢 Got Headers for: ${targetUrlStr} (Status: ${msg.status})`);
-                        const locationHeader = msg.headers['location'] || msg.headers['Location'];
+                        
+                        // --- 🧹 HEADER SANITIZATION ---
+                        // Convert the raw object into a Headers object so we can manipulate it easily
+                        const cleanHeaders = new Headers(msg.headers);
+                        
+                        // 1. Prevent Decompression Crashes
+                        cleanHeaders.delete('content-encoding');
+                        cleanHeaders.delete('content-length');
+                        cleanHeaders.delete('transfer-encoding');
+                        
+                        // 2. Strip Restrictive Security Policies
+                        cleanHeaders.delete('content-security-policy');
+                        cleanHeaders.delete('content-security-policy-report-only');
+                        cleanHeaders.delete('cross-origin-embedder-policy');
+                        cleanHeaders.delete('cross-origin-opener-policy');
+                        cleanHeaders.delete('x-frame-options');
+
+                        const locationHeader = cleanHeaders.get('location');
 
                         if (msg.status >= 300 && msg.status < 400 && locationHeader) {
                             console.log(`[SW] 🔀 Redirecting natively to: ${locationHeader}`);
@@ -117,7 +134,7 @@ async function handleProxyRequest(request) {
                         } else {
                             resolve(new Response(stream, {
                                 status: msg.status,
-                                headers: msg.headers
+                                headers: cleanHeaders
                             }));
                         }
                     } else if (msg.type === 'end') {
