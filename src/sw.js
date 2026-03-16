@@ -104,43 +104,56 @@ async function handleProxyRequest(request) {
                     const msg = JSON.parse(event.data);
                     
                     if (msg.type === 'response') {
-                        // Safely extract the location header regardless of capitalization
+                        console.log(`[SW] 🟢 Got Headers for: ${targetUrlStr} (Status: ${msg.status})`);
                         const locationHeader = msg.headers['location'] || msg.headers['Location'];
 
-                        // --- Natively handle redirects ---
                         if (msg.status >= 300 && msg.status < 400 && locationHeader) {
-                            ws.close(); // We don't need to stream a body for a redirect
+                            console.log(`[SW] 🔀 Redirecting natively to: ${locationHeader}`);
+                            ws.close();
                             const redirectUrl = new URL(locationHeader, self.location.origin).toString();
                             resolve(Response.redirect(redirectUrl, msg.status));
                         } else {
-                            // --- Standard Response ---
                             resolve(new Response(stream, {
                                 status: msg.status,
                                 headers: msg.headers
                             }));
                         }
-                    } else if (msg.type === 'end' || msg.type === 'error') {
+                    } else if (msg.type === 'end') {
+                        console.log(`[SW] 🏁 Stream ended successfully for: ${targetUrlStr}`);
+                        if (streamController) {
+                            try { streamController.close(); } catch(e) {}
+                        }
+                        ws.close();
+                    } else if (msg.type === 'error') {
+                        console.error(`[SW] ❌ Backend Error: ${msg.message}`);
                         if (streamController) {
                             try { streamController.close(); } catch(e) {}
                         }
                         ws.close();
                     }
                 } else {
-                    // It's a binary body chunk (HTML, Image, JS, etc.)
+                    // It's a binary body chunk
                     if (streamController) {
-                        const arrayBuffer = await event.data.arrayBuffer();
-                        streamController.enqueue(new Uint8Array(arrayBuffer));
+                        try {
+                            const arrayBuffer = await event.data.arrayBuffer();
+                            console.log(`[SW] 📦 Received chunk: ${arrayBuffer.byteLength} bytes`);
+                            streamController.enqueue(new Uint8Array(arrayBuffer));
+                        } catch (e) {
+                            console.error(`[SW] 💥 Failed to enqueue chunk:`, e);
+                        }
                     }
                 }
             };
 
-            ws.onerror = () => {
+            ws.onerror = (e) => {
+                console.error(`[SW] 🔌 WebSocket Error for ${targetUrlStr}:`, e);
                 if (!streamController) resolve(new Response("WebSocket Proxy Error", { status: 502 }));
             };
             
-            ws.onclose = () => {
+            ws.onclose = (e) => {
+                console.log(`[SW] 🚪 WebSocket Closed (Code: ${e.code})`);
                 if (streamController) {
-                    try { streamController.close(); } catch(e) {}
+                    try { streamController.close(); } catch(err) {}
                 }
             };
 
