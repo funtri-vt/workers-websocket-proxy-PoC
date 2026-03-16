@@ -3,104 +3,176 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V2 Proxy Sandbox</title>
+    <title>V2 Proxy Engine (Dark Mode)</title>
     <style>
+        :root {
+            --bg-dark: #121212;
+            --bg-panel: #1e1e2e;
+            --bg-input: #313244;
+            --text-light: #cdd6f4;
+            --accent: #89b4fa;
+            --accent-hover: #74c7ec;
+            --danger: #f38ba8;
+            --success: #a6e3a1;
+        }
+        
         body { 
+            margin: 0; 
             font-family: system-ui, -apple-system, sans-serif; 
             display: flex; 
             flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
             height: 100vh; 
-            margin: 0; 
-            background: #f4f4f9; 
+            background-color: var(--bg-dark); 
+            color: var(--text-light);
+            overflow: hidden; 
         }
-        .container { 
-            background: white; 
-            padding: 2.5rem; 
-            border-radius: 12px; 
-            box-shadow: 0 8px 16px rgba(0,0,0,0.1); 
-            width: 100%; 
-            max-width: 400px; 
-            text-align: center; 
+        
+        #top-bar { 
+            padding: 12px 20px; 
+            background: var(--bg-panel); 
+            display: flex; 
+            gap: 12px; 
+            align-items: center; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
+            z-index: 10; 
         }
-        h2 { margin-top: 0; color: #333; }
-        input { 
-            width: 100%; 
-            padding: 0.85rem; 
-            margin-bottom: 1rem; 
-            border: 2px solid #ddd; 
-            border-radius: 6px; 
-            box-sizing: border-box; 
-            font-size: 1rem;
-            transition: border-color 0.2s;
+        
+        .brand { 
+            font-weight: 800; 
+            letter-spacing: 1px; 
+            color: var(--accent); 
+            font-size: 18px;
+            white-space: nowrap;
         }
-        input:focus { border-color: #007bff; outline: none; }
+        
+        #url-input { 
+            flex-grow: 1; 
+            padding: 10px 16px; 
+            font-size: 15px; 
+            border-radius: 8px; 
+            border: 1px solid #45475a; 
+            background: var(--bg-input); 
+            color: var(--text-light); 
+            outline: none; 
+            transition: border 0.2s; 
+        }
+        
+        #url-input:focus { 
+            border-color: var(--accent); 
+        }
+        
         button { 
-            width: 100%; 
-            padding: 0.85rem; 
-            background: #007bff; 
-            color: white; 
-            border: none; 
-            border-radius: 6px; 
+            padding: 10px 20px; 
+            font-size: 14px; 
+            font-weight: 600; 
             cursor: pointer; 
-            font-size: 1rem;
-            font-weight: bold; 
-            transition: background 0.2s;
+            border-radius: 8px; 
+            border: none; 
+            transition: all 0.2s ease; 
         }
-        button:hover { background: #0056b3; }
-        #status { 
-            margin-top: 1.2rem; 
-            font-size: 0.85rem; 
-            color: #666; 
-            font-weight: 500;
+        
+        .btn-go { 
+            background: var(--accent); 
+            color: #11111b; 
+        }
+        
+        .btn-go:hover { 
+            background: var(--accent-hover); 
+            transform: translateY(-1px); 
+        }
+
+        #status-indicator {
+            font-size: 12px;
+            font-weight: bold;
+            color: var(--danger);
+            white-space: nowrap;
+        }
+        
+        #frame { 
+            flex-grow: 1; 
+            border: none; 
+            width: 100%; 
+            background: #fff; /* White background for the target sites by default */
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>🌐 V2 Sandbox</h2>
-        <form id="proxy-form">
-            <input type="text" id="url-input" placeholder="duckduckgo.com" required autocomplete="off" spellcheck="false">
-            <button type="submit">Launch Proxy</button>
-        </form>
-        <div id="status">Initializing...</div>
+  
+    <div id="top-bar">
+        <div class="brand">V2 ENGINE</div>
+        <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
+        <button class="btn-go" id="go-btn">Launch</button>
+        <div id="status-indicator">SW: Offline</div>
     </div>
+  
+    <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            allow="pointer-lock; keyboard-map; fullscreen"
+            tabindex="0"
+            id="frame">
+    </iframe>
 
     <script>
-        const statusEl = document.getElementById('status');
-        const form = document.getElementById('proxy-form');
+        const statusEl = document.getElementById('status-indicator');
         const input = document.getElementById('url-input');
+        const goBtn = document.getElementById('go-btn');
+        const frame = document.getElementById('frame');
 
-        // --- 1. Register the V2 Service Worker ---
+        // --- 1. Register the V2 Service Worker & Listen for Logs ---
         if ('serviceWorker' in navigator) {
-            // Force update on reload for easier development
             navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
                 .then(registration => { 
-                    statusEl.textContent = '✅ Engine Ready.'; 
-                    statusEl.style.color = '#28a745'; 
+                    statusEl.textContent = 'SW: Active'; 
+                    statusEl.style.color = 'var(--success)'; 
                 })
                 .catch(err => { 
-                    statusEl.textContent = '❌ SW Failed: ' + err.message; 
-                    statusEl.style.color = '#dc3545'; 
+                    statusEl.textContent = 'SW: Failed'; 
+                    console.error('SW Failed:', err);
                 });
-        } else {
-            statusEl.textContent = '⚠️ Service Workers not supported.';
+
+            // Catch messages from the Service Worker and log them
+            navigator.serviceWorker.addEventListener('message', event => {
+                if (event.data && event.data.type === 'sw-log') {
+                    console.log(`%c[SW Broadcast]`, 'color: #a6e3a1; font-weight: bold;', event.data.message);
+                }
+            });
         }
 
-        // --- 2. Route the Request ---
-        form.addEventListener('submit', (e) => {
-            e.preventDefault();
+        // --- 2. Routing Logic ---
+        function loadUrl() {
             let targetUrl = input.value.trim();
+            if (!targetUrl) return;
             
-            // Auto-fill protocol if the user is lazy
-            if (!/^https?:\/\//i.test(targetUrl)) {
+            // Smart Omnibox (Search vs URL)
+            if (targetUrl.includes(' ') || !targetUrl.includes('.')) {
+                targetUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(targetUrl);
+                console.log(`[Host] 🔍 Search detected. Routing to DuckDuckGo...`);
+            } else if (!/^https?:\/\//i.test(targetUrl)) {
                 targetUrl = 'https://' + targetUrl;
             }
 
-            // Launch the V2 tunnel
-            window.location.href = '/service/' + encodeURIComponent(targetUrl);
+            console.log(`[Host] 🚀 Loading into iframe: ${targetUrl}`);
+            
+            // Launch the V2 tunnel inside the iframe
+            frame.src = '/service/' + encodeURIComponent(targetUrl);
+        }
+
+        goBtn.addEventListener('click', loadUrl);
+        input.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') loadUrl();
         });
+
+        // --- 3. Eruda DevTools Auto-Injector ---
+        (function () {
+            var script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+            script.onload = function () { 
+                eruda.init({
+                    defaults: { theme: 'Dark' }
+                }); 
+                console.log('[Host] Eruda DevTools injected & ready.');
+            };
+            document.head.appendChild(script);
+        })();
     </script>
 </body>
 </html>
