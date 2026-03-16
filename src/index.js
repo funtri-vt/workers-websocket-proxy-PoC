@@ -136,6 +136,11 @@ class ScriptInjector {
 				if (window.HTMLAnchorElement) hookProp(HTMLAnchorElement.prototype, 'href');
 				if (window.HTMLFormElement) hookProp(HTMLFormElement.prototype, 'action');
 				if (window.HTMLScriptElement) hookProp(HTMLScriptElement.prototype, 'src');
+				
+				// CRITICAL FIX: Catches Webpack/Vite dynamic CSS and Iframe chunks
+				if (window.HTMLLinkElement) hookProp(HTMLLinkElement.prototype, 'href');
+				if (window.HTMLIFrameElement) hookProp(HTMLIFrameElement.prototype, 'src');
+				if (window.HTMLSourceElement) hookProp(HTMLSourceElement.prototype, 'src');
 
 				const oldFetch = window.fetch;
 				window.fetch = function(input, init) {
@@ -343,6 +348,9 @@ export default {
 								.on("link", new AttributeRewriter("href", targetUrl))
 								.on("form", new AttributeRewriter("action", targetUrl))
 								.on("script", new AttributeRewriter("src", targetUrl))
+								// ADDED: Catch iframe and source tags
+								.on("iframe", new AttributeRewriter("src", targetUrl))
+								.on("source", new AttributeRewriter("src", targetUrl)) 
 								.on("img, source", new SrcsetRewriter(targetUrl))
 								.on("script, link", new SecurityStripper());
 
