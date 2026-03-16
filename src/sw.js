@@ -83,6 +83,8 @@ async function handleProxyRequest(request) {
             wsUrl.protocol = self.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(wsUrl.toString());
 
+            ws.binaryType = 'arraybuffer';
+
             let streamController = null;
             const stream = new ReadableStream({
                 start(controller) { streamController = controller; },
@@ -99,7 +101,7 @@ async function handleProxyRequest(request) {
                 }));
             };
 
-            ws.onmessage = async (event) => {
+            ws.onmessage = (event) => { // <-- Removed 'async'
                 if (typeof event.data === 'string') {
                     const msg = JSON.parse(event.data);
                     
@@ -132,12 +134,11 @@ async function handleProxyRequest(request) {
                         ws.close();
                     }
                 } else {
-                    // It's a binary body chunk
+                    // It's a binary body chunk (Arriving natively as ArrayBuffer now!)
                     if (streamController) {
                         try {
-                            const arrayBuffer = await event.data.arrayBuffer();
-                            console.log(`[SW] 📦 Received chunk: ${arrayBuffer.byteLength} bytes`);
-                            streamController.enqueue(new Uint8Array(arrayBuffer));
+                            console.log(`[SW] 📦 Received chunk: ${event.data.byteLength} bytes`);
+                            streamController.enqueue(new Uint8Array(event.data));
                         } catch (e) {
                             console.error(`[SW] 💥 Failed to enqueue chunk:`, e);
                         }
