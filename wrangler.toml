@@ -1,7 +1,7 @@
 name = "websocket-proxy-proof-of-concept"
 main = "src/index.js"
 compatibility_date = "2026-03-12"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 [[rules]]
 type = "Text"
