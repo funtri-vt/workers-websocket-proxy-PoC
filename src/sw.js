@@ -1,4 +1,50 @@
-const SW_VERSION = 'v2.0.2';
+const SW_VERSION = 'v2.0.3';
+
+// --- Remote Logger ---
+function remoteLog(msg) {
+    console.log(msg); // Keep standard logging
+    self.clients.matchAll({ includeUncontrolled: true }).then(clients => {
+        clients.forEach(client => client.postMessage({ type: 'sw-log', message: msg }));
+    });
+}
+
+// --------------------------------------------------------
+// Persistent Cookie Storage (IndexedDB)
+// --------------------------------------------------------
+const dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open('ProxyStorage', 1);
+    request.onupgradeneeded = (e) => {
+        e.target.result.createObjectStore('cookies');
+    };
+    request.onsuccess = (e) => resolve(e.target.result);
+    request.onerror = () => reject('IDB Error');
+});
+
+async function saveCookies(domain, newCookies) {
+    try {
+        const db = await dbPromise;
+        const tx = db.transaction('cookies', 'readwrite');
+        const store = tx.objectStore('cookies');
+        
+        const existingReq = store.get(domain);
+        existingReq.onsuccess = () => {
+            let current = existingReq.result || [];
+            const merged = [...current, ...newCookies.map(c => c.split(';')[0])];
+            store.put([...new Set(merged)], domain);
+        };
+    } catch (e) { remoteLog(`[SW] IDB Save Error: ${e}`); }
+}
+
+async function getCookies(domain) {
+    try {
+        const db = await dbPromise;
+        return new Promise((resolve) => {
+            const tx = db.transaction('cookies', 'readonly');
+            const req = tx.objectStore('cookies').get(domain);
+            req.onsuccess = () => resolve(req.result || []);
+        });
+    } catch (e) { return []; }
+}
 
 // --- Aggressive Takeover ---
 self.addEventListener('install', event => {
@@ -34,7 +80,7 @@ self.addEventListener('fetch', event => {
                 const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
                 const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
                 
-                console.log(`[SW] 🩹 Rescuing leaked asset: ${url.pathname} -> ${intendedTarget}`);
+                remoteLog(`[SW] 🩹 Rescuing leaked asset: ${url.pathname} -> ${intendedTarget}`);
 
                 if (event.request.mode === 'navigate') {
                     return event.respondWith(Response.redirect(safeProxyUrl, 301));
@@ -43,7 +89,7 @@ self.addEventListener('fetch', event => {
                     return event.respondWith(handleProxyRequest(proxyReq));
                 }
             } catch (e) {
-                console.error('[SW] Leak recovery failed:', e);
+                remoteLog('[SW] Leak recovery failed:', e);
             }
         }
     }
@@ -71,20 +117,18 @@ async function handleProxyRequest(request) {
     else if (!targetUrlStr.startsWith('http')) {
         const referer = request.referrer;
         
-        // If it's a relative path that got appended directly inside /service/
         if (referer && referer.includes('/service/')) {
             try {
                 const parts = referer.split('/service/');
                 const refererTargetUrl = decodeURIComponent(parts[1]);
-                // Resolve the relative path against the parent file's true URL
                 targetUrlStr = new URL(targetUrlStr, refererTargetUrl).toString();
-                console.log(`[SW] 🩹 Rescued internal relative asset: -> ${targetUrlStr}`);
+                remoteLog(`[SW] 🩹 Rescued internal relative asset: -> ${targetUrlStr}`);
             } catch(e) {
                 targetUrlStr = 'https://' + targetUrlStr;
             }
         } else {
             if (targetUrlStr.startsWith('/')) {
-                console.warn(`[SW] ⚠️ Orphaned relative path detected: ${targetUrlStr}`);
+                remoteLog(`[SW] ⚠️ Orphaned relative path detected: ${targetUrlStr}`);
             }
             targetUrlStr = 'https://' + targetUrlStr;
         }
@@ -94,29 +138,72 @@ async function handleProxyRequest(request) {
     try {
         new URL(targetUrlStr);
     } catch (e) {
-        console.error(`[SW] ❌ FATAL URL ERROR: Cannot parse [${targetUrlStr}]`);
+        remoteLog(`[SW] ❌ FATAL URL ERROR: Cannot parse [${targetUrlStr}]`);
         return new Response("Invalid URL format", { status: 400 });
     }
+
+    // --- 🛡️ AD/TRACKER BLOCKER ---
+    const blockList = [
+        'doubleclick.net',
+        'google-analytics.com',
+        'googlesyndication.com',
+        'amazon-adsystem.com',
+        'trackersimulator.org'
+    ];
+    
+    try {
+        const targetHost = new URL(targetUrlStr).hostname;
+        if (blockList.some(domain => targetHost.includes(domain))) {
+            remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
+            return new Response(null, { status: 204 }); 
+        }
+    } catch(e) {
+        // Let malformed URLs fail naturally later
+    }
         
-    console.log(`[SW] 🚀 Proxying Sanitized URL: ${targetUrlStr}`);
+    remoteLog(`[SW] 🚀 Proxying Sanitized URL: ${targetUrlStr}`);
     
     return new Promise(async (resolve) => {
         try {
-            // Safely encode the body to Base64 (if it's a POST/PUT request)
+            // --- 📦 PAYLOAD CHUNKER (Thread-Locker Fix) ---
             let bodyBase64 = null;
             if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
-                const buffer = await request.arrayBuffer();
-                const bytes = new Uint8Array(buffer);
-                let binary = '';
-                for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
+                const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024; // 5MB limit
+                const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
+                
+                if (contentLength > MAX_PAYLOAD_SIZE) {
+                    return resolve(new Response("Payload too large. Maximum size is 5MB.", { status: 413 }));
                 }
-                bodyBase64 = btoa(binary);
+
+                const buffer = await request.clone().arrayBuffer();
+                
+                if (buffer.byteLength > MAX_PAYLOAD_SIZE) {
+                    return resolve(new Response("Payload too large. Maximum size is 5MB.", { status: 413 }));
+                }
+
+                if (buffer.byteLength > 0) {
+                    const bytes = new Uint8Array(buffer);
+                    let binary = '';
+                    const chunksize = 0xFFFF;
+                    for (let i = 0; i < bytes.length; i += chunksize) {
+                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunksize));
+                    }
+                    bodyBase64 = btoa(binary);
+                }
             }
 
-            // Extract Headers
+            // --- 📨 EXTRACT HEADERS & INJECT COOKIES ---
             const headers = {};
             request.headers.forEach((val, key) => { headers[key] = val; });
+
+            let requestDomain = "";
+            try { requestDomain = new URL(targetUrlStr).hostname; } catch(e) {}
+
+            const savedCookies = await getCookies(requestDomain);
+            if (savedCookies && savedCookies.length > 0) {
+                headers['Cookie'] = savedCookies.join('; ');
+                remoteLog(`[SW] 🍪 Attached persistent cookies for ${requestDomain}`);
+            }
 
             // Establish WS connection to our Cloudflare Worker
             const wsUrl = new URL('/ws/', self.location.origin);
@@ -146,6 +233,22 @@ async function handleProxyRequest(request) {
                     const msg = JSON.parse(event.data);
                     
                     if (msg.type === 'response') {
+                        // --- 💾 EXTRACT AND SAVE INCOMING COOKIES ---
+                        if (msg.setCookies && msg.setCookies.length > 0 && msg.targetDomain) {
+                            try {
+                                const expectedDomain = new URL(targetUrlStr).hostname;
+                                const cookieDomain = msg.targetDomain.replace(/^\./, '');
+                                const isSafeDomain = cookieDomain.includes('.') && expectedDomain.endsWith(cookieDomain);
+                                
+                                if (isSafeDomain) {
+                                    saveCookies(msg.targetDomain, msg.setCookies);
+                                    remoteLog(`[SW] 💾 Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
+                                } else {
+                                    remoteLog(`[SW] ⚠️ Blocked suspicious cookie domain: ${msg.targetDomain}`);
+                                }
+                            } catch(e) {}
+                        }
+
                         // --- 🧹 HEADER SANITIZATION ---
                         const cleanHeaders = new Headers(msg.headers);
                         
@@ -176,7 +279,7 @@ async function handleProxyRequest(request) {
                         }
                         ws.close();
                     } else if (msg.type === 'error') {
-                        console.error(`[SW] ❌ Backend Error: ${msg.message}`);
+                        remoteLog(`[SW] ❌ Backend Error: ${msg.message}`);
                         if (streamController) {
                             try { streamController.close(); } catch(e) {}
                         }
@@ -188,7 +291,7 @@ async function handleProxyRequest(request) {
                         try {
                             streamController.enqueue(new Uint8Array(event.data));
                         } catch (e) {
-                            console.error(`[SW] 💥 Failed to enqueue chunk:`, e);
+                            remoteLog(`[SW] 💥 Failed to enqueue chunk:`, e);
                         }
                     }
                 }
