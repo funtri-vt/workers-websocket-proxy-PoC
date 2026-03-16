@@ -66,10 +66,16 @@ class ScriptInjector {
 		};
 
 		const script = `
-		<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+		<script src="https://cdn.jsdelivr.net/npm/eruda/eruda.min.js"></script>
 		<script>
-			eruda.init(); 
-			console.log("[V2 Proxy] Eruda & SPA Hooks Initialized for: ${this.baseUrl}");
+			// FIX: Wait for Eruda to download before initializing, preventing ReferenceErrors
+			let eTimer = setInterval(() => {
+				if (window.eruda) {
+					clearInterval(eTimer);
+					eruda.init(); 
+					console.log("[V2 Proxy] Eruda Initialized for: ${this.baseUrl}");
+				}
+			}, 50);
 
 			(function() {
 				const config = ${JSON.stringify(configObj)};

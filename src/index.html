@@ -164,7 +164,8 @@
         // --- 3. Eruda DevTools Auto-Injector ---
         (function () {
             var script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+            // FIX: Point directly to the file to prevent SW 302 redirect failures
+            script.src = 'https://cdn.jsdelivr.net/npm/eruda/eruda.min.js';
             script.onload = function () { 
                 eruda.init({
                     defaults: { theme: 'Dark' }
