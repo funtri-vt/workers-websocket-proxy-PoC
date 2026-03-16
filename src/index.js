@@ -124,13 +124,24 @@ export default {
 
 						// --- 1. Sanitize Incoming Headers ---
 						const proxyHeaders = new Headers(msg.headers);
-						// Force uncompressed text so HTMLRewriter can read it natively
+											
+						// Force uncompressed text
 						proxyHeaders.delete("accept-encoding"); 
+											
+						// BUST THE CACHE: Prevent Wikipedia from returning empty 304 responses
+						proxyHeaders.delete("if-none-match");
+						proxyHeaders.delete("if-modified-since");
+											
 						proxyHeaders.set("Host", targetUrlObj.host);
-						proxyHeaders.set("Origin", targetUrlObj.origin);
 						proxyHeaders.set("Referer", targetUrlObj.origin + "/");
 						proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
+											
+						// CRITICAL FIX: Only set Origin for CORS/State-changing requests, NEVER for GET
+						if (msg.method.toUpperCase() !== "GET" && msg.method.toUpperCase() !== "HEAD") {
+						    proxyHeaders.set("Origin", targetUrlObj.origin);
+						} else {
+						    proxyHeaders.delete("Origin");
+						}
 						const fetchOptions = {
 							method: msg.method,
 							headers: proxyHeaders,
