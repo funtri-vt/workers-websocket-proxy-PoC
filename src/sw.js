@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.0';
+const SW_VERSION = 'v2.0.1';
 
 // --- Aggressive Takeover ---
 // Forces the browser to use the new SW immediately without needing a reload
@@ -57,8 +57,36 @@ self.addEventListener('fetch', event => {
 
 // --- The WebSocket Courier ---
 async function handleProxyRequest(request) {
-    const url = new URL(request.url);
-    const targetUrlStr = decodeURIComponent(url.pathname.replace('/service/', '')) + url.search;
+    // 1. Extract the raw URL intent safely
+    const requestUrl = new URL(request.url);
+        
+    // Extract whatever comes after /service/
+    let targetUrlStr = decodeURIComponent(requestUrl.pathname.substring(requestUrl.pathname.indexOf('/service/') + 9)) + requestUrl.search;
+
+    // --- 🚑 URL SANITIZER ---
+    // 1. Fix protocol-relative URLs (e.g., //en.wikipedia.org/style.css)
+    if (targetUrlStr.startsWith('//')) {
+        targetUrlStr = 'https:' + targetUrlStr;
+    } 
+    // 2. Fix missing protocols (e.g., www.wikipedia.org)
+    else if (!targetUrlStr.startsWith('http')) {
+        // If it's an orphaned relative path, log it so we can debug, but try to attach the main domain
+        if (targetUrlStr.startsWith('/')) {
+            console.warn(`[SW] ⚠️ Orphaned relative path detected: ${targetUrlStr}`);
+        } else {
+            targetUrlStr = 'https://' + targetUrlStr;
+        }
+    }
+
+    // 3. Final validation check before hitting the Worker
+    try {
+        new URL(targetUrlStr);
+    } catch (e) {
+        console.error(`[SW] ❌ FATAL URL ERROR: Cannot parse [${targetUrlStr}]`);
+        return new Response("Invalid URL format", { status: 400 });
+    }
+        
+    console.log(`[SW] 🚀 Proxying Sanitized URL: ${targetUrlStr}`);
     
     return new Promise(async (resolve) => {
         try {
@@ -101,7 +129,7 @@ async function handleProxyRequest(request) {
                 }));
             };
 
-            ws.onmessage = (event) => { // <-- Removed 'async'
+            ws.onmessage = (event) => {
                 if (typeof event.data === 'string') {
                     const msg = JSON.parse(event.data);
                     
@@ -109,7 +137,6 @@ async function handleProxyRequest(request) {
                         console.log(`[SW] 🟢 Got Headers for: ${targetUrlStr} (Status: ${msg.status})`);
                         
                         // --- 🧹 HEADER SANITIZATION ---
-                        // Convert the raw object into a Headers object so we can manipulate it easily
                         const cleanHeaders = new Headers(msg.headers);
                         
                         // 1. Prevent Decompression Crashes
@@ -151,7 +178,7 @@ async function handleProxyRequest(request) {
                         ws.close();
                     }
                 } else {
-                    // It's a binary body chunk (Arriving natively as ArrayBuffer now!)
+                    // It's a binary body chunk
                     if (streamController) {
                         try {
                             console.log(`[SW] 📦 Received chunk: ${event.data.byteLength} bytes`);
