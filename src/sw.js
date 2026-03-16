@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.4';
+const SW_VERSION = 'v2.0.5'; // Bumped version to force cache update
 
 // --- Remote Logger ---
 function remoteLog(msg) {
@@ -54,20 +54,22 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 self.addEventListener('fetch', event => {
     const url = new URL(event.request.url);
 
-    // 1. SYSTEM BYPASS (Let native UI and WS connections pass)
+    // 1. SYSTEM BYPASS (Let native UI, WS, and our CDNs pass directly)
     if (
-        url.pathname === '/' ||
-        url.pathname === '/index.html' ||
-        url.pathname === '/sw.js' ||
-        url.pathname.startsWith('/ws/') ||
-        url.pathname.startsWith('/proxy-ws/')
+        url.hostname === 'cdn.jsdelivr.net' || // Allow Eruda to bypass the proxy entirely
+        (url.origin === self.location.origin && (
+            url.pathname === '/' ||
+            url.pathname === '/index.html' ||
+            url.pathname === '/sw.js' ||
+            url.pathname.startsWith('/ws/') ||
+            url.pathname.startsWith('/proxy-ws/')
+        ))
     ) {
-        return;
+        return; // Fallback to normal browser fetch
     }
 
     event.respondWith((async () => {
         // --- DEEP REFERER RESOLUTION ---
-        // Overcomes strict Referrer-Policy stripping by querying the active tab
         let targetBaseStr = null;
         
         const referer = event.request.referrer;
@@ -81,31 +83,38 @@ self.addEventListener('fetch', event => {
         }
 
         // 2. EXTERNAL LEAK RECOVERY (Missing /service/ entirely)
-        // e.g., /chunk-animation.css
         if (!url.pathname.startsWith('/service/')) {
-            if (targetBaseStr) {
+            let intendedTarget = null;
+
+            if (url.origin !== self.location.origin) {
+                // FIX: It's a direct third-party request from the iframe (e.g., external API or image)
+                // Proxy it exactly as it is, do not mangle it with the target domain.
+                intendedTarget = url.href;
+            } else if (targetBaseStr) {
+                // It's a relative path aimed at our host (e.g., /chunk-animation.css)
                 try {
                     const proxiedOrigin = new URL(targetBaseStr).origin;
-                    const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
-                    const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
-                    
-                    remoteLog(`[SW] 🩹 Deep Rescue External Leak: ${url.pathname} -> ${intendedTarget}`);
-
-                    if (event.request.mode === 'navigate') {
-                        return Response.redirect(safeProxyUrl, 301);
-                    } else {
-                        const proxyReq = new Request(safeProxyUrl, event.request);
-                        return await handleProxyRequest(proxyReq, intendedTarget);
-                    }
+                    intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
                 } catch (e) {
-                    remoteLog(`[SW] Leak recovery failed: ${e}`);
+                    remoteLog(`[SW] Leak resolution failed: ${e}`);
+                }
+            }
+
+            if (intendedTarget) {
+                const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+                remoteLog(`[SW] 🩹 Deep Rescue Leak: ${url.href} -> ${intendedTarget}`);
+
+                if (event.request.mode === 'navigate') {
+                    return Response.redirect(safeProxyUrl, 301);
+                } else {
+                    const proxyReq = new Request(safeProxyUrl, event.request);
+                    return await handleProxyRequest(proxyReq, intendedTarget);
                 }
             }
             return new Response("Not Found - Proxy Leak", { status: 404 });
         }
 
         // 3. INTERNAL RELATIVE RESCUE (Has /service/ but no protocol)
-        // e.g., /service/images/icon.png
         let extractedTarget = decodeURIComponent(url.pathname.substring(url.pathname.indexOf('/service/') + 9)) + url.search;
         
         if (!extractedTarget.startsWith('http')) {
