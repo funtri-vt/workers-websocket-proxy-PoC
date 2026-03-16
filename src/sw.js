@@ -1,7 +1,6 @@
-const SW_VERSION = 'v2.0.1';
+const SW_VERSION = 'v2.0.2';
 
 // --- Aggressive Takeover ---
-// Forces the browser to use the new SW immediately without needing a reload
 self.addEventListener('install', event => {
     self.skipWaiting();
 });
@@ -25,7 +24,7 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // 2. LEAK RECOVERY (Fixes DuckDuckGo, relative CSS/images, etc.)
+    // 2. LEAK RECOVERY (Fixes DuckDuckGo, root-relative CSS/images, etc.)
     if (!url.pathname.startsWith('/service/')) {
         const referer = event.request.referrer;
         if (referer && referer.includes('/service/')) {
@@ -68,12 +67,25 @@ async function handleProxyRequest(request) {
     if (targetUrlStr.startsWith('//')) {
         targetUrlStr = 'https:' + targetUrlStr;
     } 
-    // 2. Fix missing protocols (e.g., www.wikipedia.org)
+    // 2. Fix missing protocols AND Internal Relative Leaks
     else if (!targetUrlStr.startsWith('http')) {
-        // If it's an orphaned relative path, log it so we can debug, but try to attach the main domain
-        if (targetUrlStr.startsWith('/')) {
-            console.warn(`[SW] ⚠️ Orphaned relative path detected: ${targetUrlStr}`);
+        const referer = request.referrer;
+        
+        // If it's a relative path that got appended directly inside /service/
+        if (referer && referer.includes('/service/')) {
+            try {
+                const parts = referer.split('/service/');
+                const refererTargetUrl = decodeURIComponent(parts[1]);
+                // Resolve the relative path against the parent file's true URL
+                targetUrlStr = new URL(targetUrlStr, refererTargetUrl).toString();
+                console.log(`[SW] 🩹 Rescued internal relative asset: -> ${targetUrlStr}`);
+            } catch(e) {
+                targetUrlStr = 'https://' + targetUrlStr;
+            }
         } else {
+            if (targetUrlStr.startsWith('/')) {
+                console.warn(`[SW] ⚠️ Orphaned relative path detected: ${targetUrlStr}`);
+            }
             targetUrlStr = 'https://' + targetUrlStr;
         }
     }
@@ -134,17 +146,12 @@ async function handleProxyRequest(request) {
                     const msg = JSON.parse(event.data);
                     
                     if (msg.type === 'response') {
-                        console.log(`[SW] 🟢 Got Headers for: ${targetUrlStr} (Status: ${msg.status})`);
-                        
                         // --- 🧹 HEADER SANITIZATION ---
                         const cleanHeaders = new Headers(msg.headers);
                         
-                        // 1. Prevent Decompression Crashes
                         cleanHeaders.delete('content-encoding');
                         cleanHeaders.delete('content-length');
                         cleanHeaders.delete('transfer-encoding');
-                        
-                        // 2. Strip Restrictive Security Policies
                         cleanHeaders.delete('content-security-policy');
                         cleanHeaders.delete('content-security-policy-report-only');
                         cleanHeaders.delete('cross-origin-embedder-policy');
@@ -154,7 +161,6 @@ async function handleProxyRequest(request) {
                         const locationHeader = cleanHeaders.get('location');
 
                         if (msg.status >= 300 && msg.status < 400 && locationHeader) {
-                            console.log(`[SW] 🔀 Redirecting natively to: ${locationHeader}`);
                             ws.close();
                             const redirectUrl = new URL(locationHeader, self.location.origin).toString();
                             resolve(Response.redirect(redirectUrl, msg.status));
@@ -165,7 +171,6 @@ async function handleProxyRequest(request) {
                             }));
                         }
                     } else if (msg.type === 'end') {
-                        console.log(`[SW] 🏁 Stream ended successfully for: ${targetUrlStr}`);
                         if (streamController) {
                             try { streamController.close(); } catch(e) {}
                         }
@@ -178,10 +183,9 @@ async function handleProxyRequest(request) {
                         ws.close();
                     }
                 } else {
-                    // It's a binary body chunk
+                    // Binary payload handler
                     if (streamController) {
                         try {
-                            console.log(`[SW] 📦 Received chunk: ${event.data.byteLength} bytes`);
                             streamController.enqueue(new Uint8Array(event.data));
                         } catch (e) {
                             console.error(`[SW] 💥 Failed to enqueue chunk:`, e);
@@ -191,12 +195,10 @@ async function handleProxyRequest(request) {
             };
 
             ws.onerror = (e) => {
-                console.error(`[SW] 🔌 WebSocket Error for ${targetUrlStr}:`, e);
                 if (!streamController) resolve(new Response("WebSocket Proxy Error", { status: 502 }));
             };
             
             ws.onclose = (e) => {
-                console.log(`[SW] 🚪 WebSocket Closed (Code: ${e.code})`);
                 if (streamController) {
                     try { streamController.close(); } catch(err) {}
                 }
