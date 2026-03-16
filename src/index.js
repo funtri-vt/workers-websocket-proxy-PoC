@@ -7,7 +7,7 @@ import indexHtml from "./index.html";
 import swJs from "./sw.js";
 
 // =========================================================
-// 1. HTML Rewriter Classes (The Heavy Lifters)
+// 1. HTML Rewriter Classes
 // =========================================================
 
 class AttributeRewriter {
@@ -65,7 +65,6 @@ class ScriptInjector {
 			targetOrigin: new URL(this.baseUrl).origin
 		};
 
-		// Merged V2 Eruda + V1 SPA Taming Hooks
 		const script = `
 		<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
 		<script>
@@ -73,14 +72,12 @@ class ScriptInjector {
 			console.log("[V2 Proxy] Eruda & SPA Hooks Initialized for: ${this.baseUrl}");
 
 			(function() {
-				// --- 0. Configuration (Injected Safely via JSON) ---
 				const config = ${JSON.stringify(configObj)};
 				const prefix = config.targetDomain + ":";
 				const PROXY_BASE = window.location.origin + '/service/';
 				const TARGET_BASE = config.targetBase;
 				const TARGET_ORIGIN = config.targetOrigin;
 
-				// URL Traffic Controller: The brain of the proxy
 				function resolveUrl(url) {
 					if (!url || typeof url !== 'string') return url;
 					if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(PROXY_BASE)) return url;
@@ -97,7 +94,6 @@ class ScriptInjector {
 					}
 				}
 
-				// --- 1. Advanced Storage Spoofing ---
 				const makeProxy = (real) => new Proxy(real, {
 					get(target, prop) {
 						if (prop === 'getItem') return (k) => target.getItem(prefix + k);
@@ -116,11 +112,9 @@ class ScriptInjector {
 				try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
 				try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
 
-				// --- 2. Focus & Frame Escape Prevention ---
 				try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
 				try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
 
-				// --- 3. Active Interception ---
 				const orgSetAttribute = Element.prototype.setAttribute;
 				Element.prototype.setAttribute = function(name, value) {
 					if (['src', 'href', 'action'].includes(name.toLowerCase())) {
@@ -143,7 +137,6 @@ class ScriptInjector {
 				if (window.HTMLFormElement) hookProp(HTMLFormElement.prototype, 'action');
 				if (window.HTMLScriptElement) hookProp(HTMLScriptElement.prototype, 'src');
 
-				// --- 4. API Hooking (Fetch/XHR/Window) ---
 				const oldFetch = window.fetch;
 				window.fetch = function(input, init) {
 					if (typeof input === 'string') input = resolveUrl(input);
@@ -163,7 +156,6 @@ class ScriptInjector {
 					return oldWindowOpen.apply(window, [resolveUrl(url), ...args]);
 				};
 
-				// --- 5. Stateless WebSocket Interceptor ---
 				const OriginalWebSocket = window.WebSocket;
 				window.WebSocket = function(url, protocols) {
 					if (typeof url === 'string' && url.includes('/ws/')) {
@@ -178,7 +170,6 @@ class ScriptInjector {
 				window.WebSocket.prototype = OriginalWebSocket.prototype;
 				Object.assign(window.WebSocket, OriginalWebSocket);
 
-				// --- 6. History API Hooking (The Cage) ---
 				const oldPushState = window.history.pushState;
 				window.history.pushState = function(state, title, url) {
 					return oldPushState.apply(window.history, [state, title, resolveUrl(url)]);
@@ -188,7 +179,6 @@ class ScriptInjector {
 					return oldReplaceState.apply(window.history, [state, title, resolveUrl(url)]);
 				};
 
-				// --- 7. Location Guarding ---
 				try { Object.defineProperty(window, '__proxyLocation', { value: new URL(TARGET_BASE) }); } catch(e) {}
 			})();
 		</script>`;
@@ -205,7 +195,6 @@ export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
 
-		// --- Route A: Static Assets (UI & SW) ---
 		if (url.pathname === "/sw.js") {
 			return new Response(swJs, {
 				headers: { "content-type": "application/javascript", "cache-control": "no-store" },
@@ -221,7 +210,6 @@ export default {
 			});
 		}
 
-		// --- Route B: The Core Proxy Engine (WebSocket Bridge) ---
 		if (url.pathname === "/ws/") {
 			if (request.headers.get("Upgrade") !== "websocket") {
 				return new Response("Expected WebSocket", { status: 426 });
@@ -233,6 +221,24 @@ export default {
 			const safeSend = (data) => {
 				if (server.readyState === 1) {
 					try { server.send(data); } catch (e) {}
+				}
+			};
+
+			// 🛡️ THE PAYLOAD SLICER: Prevents Cloudflare from crashing the WS on large assets
+			const sendChunked = (data) => {
+				if (server.readyState !== 1) return;
+				const CHUNK_SIZE = 64 * 1024; // 64KB safe slices
+				
+				if (data.byteLength > CHUNK_SIZE) {
+					for (let i = 0; i < data.byteLength; i += CHUNK_SIZE) {
+						if (server.readyState !== 1) break;
+						try {
+							// Subarray is zero-copy and highly performant
+							server.send(data.subarray(i, i + CHUNK_SIZE)); 
+						} catch(e) {}
+					}
+				} else {
+					try { server.send(data); } catch(e) {}
 				}
 			};
 
@@ -248,7 +254,6 @@ export default {
 						
 						safeSend(JSON.stringify({ type: "info", message: `V2 Fetching: ${targetUrl}` }));
 
-						// --- 1. Sanitize Incoming Headers ---
 						const proxyHeaders = new Headers(msg.headers);
 											
 						proxyHeaders.delete("accept-encoding"); 
@@ -275,7 +280,6 @@ export default {
 							fetchOptions.body = Buffer.from(msg.body, "base64");
 						}
 
-						// Handle Preflight OPTIONS instantly
 						if (msg.method.toUpperCase() === "OPTIONS") {
 							safeSend(JSON.stringify({
 								type: "response",
@@ -292,14 +296,10 @@ export default {
 							return;
 						}
 
-						// --- 2. Perform the Target Fetch ---
 						const res = await fetch(new Request(targetUrl, fetchOptions));
 
-						// --- 3. Sanitize Outgoing Headers ---
 						const headersOut = {};
 						let contentType = "";
-						
-						// THIS was already in your V2 but the client SW was ignoring it until we fixed it!
 						const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
 
 						res.headers.forEach((value, key) => {
@@ -334,7 +334,7 @@ export default {
 							targetDomain: targetUrlObj.hostname
 						}));
 
-						// --- 4. Stream & Rewrite the Body ---
+						// --- 4. Stream & Rewrite the Body (With Safe Chunking) ---
 						if (contentType.includes("text/html")) {
 							const rewriter = new HTMLRewriter()
 								.on("head", new ScriptInjector(targetUrl))
@@ -355,7 +355,7 @@ export default {
 										if (server.readyState !== 1) break;
 										const { done, value } = await reader.read();
 										if (done) break;
-										safeSend(value); // Send raw Uint8Array chunk
+										sendChunked(value); // Safe Slicer
 									}
 								} finally {
 									reader.releaseLock();
@@ -368,7 +368,7 @@ export default {
 									if (server.readyState !== 1) break;
 									const { done, value } = await reader.read();
 									if (done) break;
-									safeSend(value);
+									sendChunked(value); // Safe Slicer
 								}
 							} finally {
 								reader.releaseLock();
@@ -389,7 +389,6 @@ export default {
 			});
 		}
 
-		// --- Route C: Native WebSocket Proxy (Ported from V1) ---
 		if (url.pathname.startsWith("/proxy-ws/")) {
 			const targetUrlParam = url.searchParams.get("target");
 			if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
@@ -459,7 +458,6 @@ export default {
 			});
 		}
 
-		// --- Route D: The Catch-All ---
 		return new Response("V2: 404 Not Found", { status: 404 });
 	},
 };
