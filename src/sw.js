@@ -1,8 +1,8 @@
-const SW_VERSION = 'v2.0.3';
+const SW_VERSION = 'v2.0.4';
 
 // --- Remote Logger ---
 function remoteLog(msg) {
-    console.log(msg); // Keep standard logging
+    console.log(msg);
     self.clients.matchAll({ includeUncontrolled: true }).then(clients => {
         clients.forEach(client => client.postMessage({ type: 'sw-log', message: msg }));
     });
@@ -47,13 +47,8 @@ async function getCookies(domain) {
 }
 
 // --- Aggressive Takeover ---
-self.addEventListener('install', event => {
-    self.skipWaiting();
-});
-
-self.addEventListener('activate', event => {
-    event.waitUntil(self.clients.claim());
-});
+self.addEventListener('install', event => self.skipWaiting());
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
 // --- Main Router ---
 self.addEventListener('fetch', event => {
@@ -70,71 +65,72 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // 2. LEAK RECOVERY (Fixes DuckDuckGo, root-relative CSS/images, etc.)
-    if (!url.pathname.startsWith('/service/')) {
+    event.respondWith((async () => {
+        // --- DEEP REFERER RESOLUTION ---
+        // Overcomes strict Referrer-Policy stripping by querying the active tab
+        let targetBaseStr = null;
+        
         const referer = event.request.referrer;
         if (referer && referer.includes('/service/')) {
-            try {
-                const parts = referer.split('/service/');
-                const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
-                const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
-                const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
-                
-                remoteLog(`[SW] 🩹 Rescuing leaked asset: ${url.pathname} -> ${intendedTarget}`);
-
-                if (event.request.mode === 'navigate') {
-                    return event.respondWith(Response.redirect(safeProxyUrl, 301));
-                } else {
-                    const proxyReq = new Request(safeProxyUrl, event.request);
-                    return event.respondWith(handleProxyRequest(proxyReq));
-                }
-            } catch (e) {
-                remoteLog('[SW] Leak recovery failed:', e);
+            targetBaseStr = decodeURIComponent(referer.split('/service/')[1]);
+        } else if (event.clientId) {
+            const client = await self.clients.get(event.clientId);
+            if (client && client.url.includes('/service/')) {
+                targetBaseStr = decodeURIComponent(client.url.split('/service/')[1]);
             }
         }
-    }
 
-    // 3. STANDARD PROXY PASS
-    if (url.pathname.startsWith('/service/')) {
-        event.respondWith(handleProxyRequest(event.request));
-    }
+        // 2. EXTERNAL LEAK RECOVERY (Missing /service/ entirely)
+        // e.g., /chunk-animation.css
+        if (!url.pathname.startsWith('/service/')) {
+            if (targetBaseStr) {
+                try {
+                    const proxiedOrigin = new URL(targetBaseStr).origin;
+                    const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
+                    const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+                    
+                    remoteLog(`[SW] 🩹 Deep Rescue External Leak: ${url.pathname} -> ${intendedTarget}`);
+
+                    if (event.request.mode === 'navigate') {
+                        return Response.redirect(safeProxyUrl, 301);
+                    } else {
+                        const proxyReq = new Request(safeProxyUrl, event.request);
+                        return await handleProxyRequest(proxyReq, intendedTarget);
+                    }
+                } catch (e) {
+                    remoteLog(`[SW] Leak recovery failed: ${e}`);
+                }
+            }
+            return new Response("Not Found - Proxy Leak", { status: 404 });
+        }
+
+        // 3. INTERNAL RELATIVE RESCUE (Has /service/ but no protocol)
+        // e.g., /service/images/icon.png
+        let extractedTarget = decodeURIComponent(url.pathname.substring(url.pathname.indexOf('/service/') + 9)) + url.search;
+        
+        if (!extractedTarget.startsWith('http')) {
+            if (extractedTarget.startsWith('//')) {
+                extractedTarget = 'https:' + extractedTarget;
+            } else if (targetBaseStr) {
+                try {
+                    extractedTarget = new URL(extractedTarget, targetBaseStr).toString();
+                    remoteLog(`[SW] 🩹 Rescued Internal Relative: -> ${extractedTarget}`);
+                } catch(e) {
+                    extractedTarget = 'https://' + extractedTarget;
+                }
+            } else {
+                extractedTarget = 'https://' + extractedTarget;
+            }
+        }
+
+        // 4. STANDARD PROXY PASS
+        return await handleProxyRequest(event.request, extractedTarget);
+    })());
 });
 
 // --- The WebSocket Courier ---
-async function handleProxyRequest(request) {
-    // 1. Extract the raw URL intent safely
-    const requestUrl = new URL(request.url);
-        
-    // Extract whatever comes after /service/
-    let targetUrlStr = decodeURIComponent(requestUrl.pathname.substring(requestUrl.pathname.indexOf('/service/') + 9)) + requestUrl.search;
-
-    // --- 🚑 URL SANITIZER ---
-    // 1. Fix protocol-relative URLs (e.g., //en.wikipedia.org/style.css)
-    if (targetUrlStr.startsWith('//')) {
-        targetUrlStr = 'https:' + targetUrlStr;
-    } 
-    // 2. Fix missing protocols AND Internal Relative Leaks
-    else if (!targetUrlStr.startsWith('http')) {
-        const referer = request.referrer;
-        
-        if (referer && referer.includes('/service/')) {
-            try {
-                const parts = referer.split('/service/');
-                const refererTargetUrl = decodeURIComponent(parts[1]);
-                targetUrlStr = new URL(targetUrlStr, refererTargetUrl).toString();
-                remoteLog(`[SW] 🩹 Rescued internal relative asset: -> ${targetUrlStr}`);
-            } catch(e) {
-                targetUrlStr = 'https://' + targetUrlStr;
-            }
-        } else {
-            if (targetUrlStr.startsWith('/')) {
-                remoteLog(`[SW] ⚠️ Orphaned relative path detected: ${targetUrlStr}`);
-            }
-            targetUrlStr = 'https://' + targetUrlStr;
-        }
-    }
-
-    // 3. Final validation check before hitting the Worker
+async function handleProxyRequest(request, targetUrlStr) {
+    // 1. Final validation check
     try {
         new URL(targetUrlStr);
     } catch (e) {
@@ -157,59 +153,51 @@ async function handleProxyRequest(request) {
             remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
             return new Response(null, { status: 204 }); 
         }
-    } catch(e) {
-        // Let malformed URLs fail naturally later
-    }
+    } catch(e) {}
         
-    remoteLog(`[SW] 🚀 Proxying Sanitized URL: ${targetUrlStr}`);
+    remoteLog(`[SW] 🚀 Proxying: ${targetUrlStr}`);
     
-    return new Promise(async (resolve) => {
-        try {
-            // --- 📦 PAYLOAD CHUNKER (Thread-Locker Fix) ---
-            let bodyBase64 = null;
-            if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
-                const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024; // 5MB limit
-                const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
-                
-                if (contentLength > MAX_PAYLOAD_SIZE) {
-                    return resolve(new Response("Payload too large. Maximum size is 5MB.", { status: 413 }));
-                }
+    try {
+        // --- 📦 PAYLOAD CHUNKER ---
+        let bodyBase64 = null;
+        if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
+            const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024;
+            const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
+            
+            if (contentLength > MAX_PAYLOAD_SIZE) return new Response("Payload too large.", { status: 413 });
 
-                const buffer = await request.clone().arrayBuffer();
-                
-                if (buffer.byteLength > MAX_PAYLOAD_SIZE) {
-                    return resolve(new Response("Payload too large. Maximum size is 5MB.", { status: 413 }));
-                }
+            const buffer = await request.clone().arrayBuffer();
+            if (buffer.byteLength > MAX_PAYLOAD_SIZE) return new Response("Payload too large.", { status: 413 });
 
-                if (buffer.byteLength > 0) {
-                    const bytes = new Uint8Array(buffer);
-                    let binary = '';
-                    const chunksize = 0xFFFF;
-                    for (let i = 0; i < bytes.length; i += chunksize) {
-                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunksize));
-                    }
-                    bodyBase64 = btoa(binary);
+            if (buffer.byteLength > 0) {
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                const chunksize = 0xFFFF;
+                for (let i = 0; i < bytes.length; i += chunksize) {
+                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunksize));
                 }
+                bodyBase64 = btoa(binary);
             }
+        }
 
-            // --- 📨 EXTRACT HEADERS & INJECT COOKIES ---
-            const headers = {};
-            request.headers.forEach((val, key) => { headers[key] = val; });
+        // --- 📨 EXTRACT HEADERS & INJECT COOKIES ---
+        const headers = {};
+        request.headers.forEach((val, key) => { headers[key] = val; });
 
-            let requestDomain = "";
-            try { requestDomain = new URL(targetUrlStr).hostname; } catch(e) {}
+        let requestDomain = "";
+        try { requestDomain = new URL(targetUrlStr).hostname; } catch(e) {}
 
-            const savedCookies = await getCookies(requestDomain);
-            if (savedCookies && savedCookies.length > 0) {
-                headers['Cookie'] = savedCookies.join('; ');
-                remoteLog(`[SW] 🍪 Attached persistent cookies for ${requestDomain}`);
-            }
+        const savedCookies = await getCookies(requestDomain);
+        if (savedCookies && savedCookies.length > 0) {
+            headers['Cookie'] = savedCookies.join('; ');
+        }
 
-            // Establish WS connection to our Cloudflare Worker
-            const wsUrl = new URL('/ws/', self.location.origin);
-            wsUrl.protocol = self.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // Establish WS connection to Cloudflare Worker
+        const wsUrl = new URL('/ws/', self.location.origin);
+        wsUrl.protocol = self.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        
+        return new Promise((resolve) => {
             const ws = new WebSocket(wsUrl.toString());
-
             ws.binaryType = 'arraybuffer';
 
             let streamController = null;
@@ -233,25 +221,19 @@ async function handleProxyRequest(request) {
                     const msg = JSON.parse(event.data);
                     
                     if (msg.type === 'response') {
-                        // --- 💾 EXTRACT AND SAVE INCOMING COOKIES ---
+                        // --- 💾 EXTRACT AND SAVE COOKIES ---
                         if (msg.setCookies && msg.setCookies.length > 0 && msg.targetDomain) {
                             try {
                                 const expectedDomain = new URL(targetUrlStr).hostname;
                                 const cookieDomain = msg.targetDomain.replace(/^\./, '');
-                                const isSafeDomain = cookieDomain.includes('.') && expectedDomain.endsWith(cookieDomain);
-                                
-                                if (isSafeDomain) {
+                                if (cookieDomain.includes('.') && expectedDomain.endsWith(cookieDomain)) {
                                     saveCookies(msg.targetDomain, msg.setCookies);
-                                    remoteLog(`[SW] 💾 Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
-                                } else {
-                                    remoteLog(`[SW] ⚠️ Blocked suspicious cookie domain: ${msg.targetDomain}`);
                                 }
                             } catch(e) {}
                         }
 
                         // --- 🧹 HEADER SANITIZATION ---
                         const cleanHeaders = new Headers(msg.headers);
-                        
                         cleanHeaders.delete('content-encoding');
                         cleanHeaders.delete('content-length');
                         cleanHeaders.delete('transfer-encoding');
@@ -262,7 +244,6 @@ async function handleProxyRequest(request) {
                         cleanHeaders.delete('x-frame-options');
 
                         const locationHeader = cleanHeaders.get('location');
-
                         if (msg.status >= 300 && msg.status < 400 && locationHeader) {
                             ws.close();
                             const redirectUrl = new URL(locationHeader, self.location.origin).toString();
@@ -274,41 +255,29 @@ async function handleProxyRequest(request) {
                             }));
                         }
                     } else if (msg.type === 'end') {
-                        if (streamController) {
-                            try { streamController.close(); } catch(e) {}
-                        }
+                        if (streamController) try { streamController.close(); } catch(e) {}
                         ws.close();
                     } else if (msg.type === 'error') {
                         remoteLog(`[SW] ❌ Backend Error: ${msg.message}`);
-                        if (streamController) {
-                            try { streamController.close(); } catch(e) {}
-                        }
+                        if (streamController) try { streamController.close(); } catch(e) {}
                         ws.close();
                     }
                 } else {
-                    // Binary payload handler
                     if (streamController) {
-                        try {
-                            streamController.enqueue(new Uint8Array(event.data));
-                        } catch (e) {
-                            remoteLog(`[SW] 💥 Failed to enqueue chunk:`, e);
-                        }
+                        try { streamController.enqueue(new Uint8Array(event.data)); } catch (e) {}
                     }
                 }
             };
 
-            ws.onerror = (e) => {
+            ws.onerror = () => {
                 if (!streamController) resolve(new Response("WebSocket Proxy Error", { status: 502 }));
             };
             
-            ws.onclose = (e) => {
-                if (streamController) {
-                    try { streamController.close(); } catch(err) {}
-                }
+            ws.onclose = () => {
+                if (streamController) try { streamController.close(); } catch(e) {}
             };
-
-        } catch (err) {
-            resolve(new Response(`Service Worker Error: ${err.message}`, { status: 500 }));
-        }
-    });
+        });
+    } catch (err) {
+        return new Response(`Service Worker Error: ${err.message}`, { status: 500 });
+    }
 }
