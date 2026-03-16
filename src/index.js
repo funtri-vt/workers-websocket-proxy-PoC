@@ -60,9 +60,14 @@ class ScriptInjector {
 		this.baseUrl = baseUrl;
 	}
 	element(element) {
-		// We will put our new, cleaner SPA-taming script here later.
-		// For now, just a placeholder to keep the skeleton clean.
-		element.prepend(`<script>/* V2 Client Injector Placeholder */</script>`, { html: true });
+		// Inject Eruda for debugging
+		const erudaInjection = `
+			<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+			<script>eruda.init(); console.log("V2 Proxy & Eruda Initialized for: ${this.baseUrl}");</script>
+		`;
+		
+		// We will eventually put our V2 SPA-taming hooks here alongside Eruda
+		element.prepend(erudaInjection, { html: true });
 	}
 }
 

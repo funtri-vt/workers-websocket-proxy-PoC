@@ -104,11 +104,21 @@ async function handleProxyRequest(request) {
                     const msg = JSON.parse(event.data);
                     
                     if (msg.type === 'response') {
-                        // We got the headers, resolve the fetch request so the browser can start reading
-                        resolve(new Response(stream, {
-                            status: msg.status,
-                            headers: msg.headers
-                        }));
+                        // Safely extract the location header regardless of capitalization
+                        const locationHeader = msg.headers['location'] || msg.headers['Location'];
+
+                        // --- Natively handle redirects ---
+                        if (msg.status >= 300 && msg.status < 400 && locationHeader) {
+                            ws.close(); // We don't need to stream a body for a redirect
+                            const redirectUrl = new URL(locationHeader, self.location.origin).toString();
+                            resolve(Response.redirect(redirectUrl, msg.status));
+                        } else {
+                            // --- Standard Response ---
+                            resolve(new Response(stream, {
+                                status: msg.status,
+                                headers: msg.headers
+                            }));
+                        }
                     } else if (msg.type === 'end' || msg.type === 'error') {
                         if (streamController) {
                             try { streamController.close(); } catch(e) {}
