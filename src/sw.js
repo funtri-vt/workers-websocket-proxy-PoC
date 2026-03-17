@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.6'; // Bumped version to force cache update
+const SW_VERSION = 'v2.0.7'; // Bumped version to force cache update
 
 // --- Remote Logger ---
 function remoteLog(msg) {
@@ -106,24 +106,58 @@ self.addEventListener('fetch', event => {
         
         const referer = event.request.referrer;
         if (referer && referer.includes('/service/')) {
-            targetBaseStr = decodeURIComponent(referer.split('/service/')[1]);
+            targetBaseStr = decodeURIComponent(referer.substring(referer.indexOf('/service/') + 9));
         } else if (event.clientId) {
             const client = await self.clients.get(event.clientId);
             if (client && client.url.includes('/service/')) {
-                targetBaseStr = decodeURIComponent(client.url.split('/service/')[1]);
+                targetBaseStr = decodeURIComponent(client.url.substring(client.url.indexOf('/service/') + 9));
             }
         }
 
-        // 2. EXTERNAL LEAK RECOVERY (Missing /service/ entirely)
-        if (!url.pathname.startsWith('/service/')) {
-            let intendedTarget = null;
+        // --- STRICT ROUTING LOGIC ---
 
-            if (url.origin !== self.location.origin) {
-                // FIX: It's a direct third-party request from the iframe (e.g., external API or image)
-                // Proxy it exactly as it is, do not mangle it with the target domain.
-                intendedTarget = url.href;
-            } else if (targetBaseStr) {
-                // It's a relative path aimed at our host (e.g., /chunk-animation.css)
+        // Case A: External Leak (Different Domain)
+        if (url.origin !== self.location.origin) {
+            // It's a direct 3rd party request. Wrap it entirely, even if it has /service/ in it.
+            const intendedTarget = url.href;
+            const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+            remoteLog(`[SW] 🩹 External Rescue: ${url.href} -> ${safeProxyUrl}`);
+
+            if (event.request.mode === 'navigate') {
+                return Response.redirect(safeProxyUrl, 301);
+            } else {
+                const proxyReq = new Request(safeProxyUrl, event.request);
+                return await handleProxyRequest(proxyReq, intendedTarget);
+            }
+        }
+
+        // Case B: Internal Request (Our Domain)
+        if (url.pathname.startsWith('/service/')) {
+            // It's a valid proxy command aimed at us
+            let extractedTarget = decodeURIComponent(url.pathname.substring(9)) + url.search;
+            
+            // Cleanup missing protocols
+            if (!extractedTarget.startsWith('http')) {
+                if (extractedTarget.startsWith('//')) {
+                    extractedTarget = 'https:' + extractedTarget;
+                } else if (targetBaseStr) {
+                    try {
+                        extractedTarget = new URL(extractedTarget, targetBaseStr).toString();
+                    } catch(e) {
+                        extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
+                    }
+                } else {
+                    extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
+                }
+            }
+            
+            // 4. STANDARD PROXY PASS
+            return await handleProxyRequest(event.request, extractedTarget);
+        } else {
+            // Case C: Internal Leak (Our domain, but missing the /service/ prefix)
+            // Example: A website requests /assets/style.css
+            let intendedTarget = null;
+            if (targetBaseStr) {
                 try {
                     const proxiedOrigin = new URL(targetBaseStr).origin;
                     intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
@@ -134,7 +168,7 @@ self.addEventListener('fetch', event => {
 
             if (intendedTarget) {
                 const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
-                remoteLog(`[SW] 🩹 Deep Rescue Leak: ${url.href} -> ${intendedTarget}`);
+                remoteLog(`[SW] 🩹 Internal Rescue: ${url.pathname} -> ${intendedTarget}`);
 
                 if (event.request.mode === 'navigate') {
                     return Response.redirect(safeProxyUrl, 301);
@@ -143,31 +177,9 @@ self.addEventListener('fetch', event => {
                     return await handleProxyRequest(proxyReq, intendedTarget);
                 }
             }
+            
             return new Response("Not Found - Proxy Leak", { status: 404 });
         }
-
-        // 3. INTERNAL RELATIVE RESCUE (Has /service/ but no protocol)
-        let extractedTarget = decodeURIComponent(url.pathname.substring(url.pathname.indexOf('/service/') + 9)) + url.search;
-        
-        if (!extractedTarget.startsWith('http')) {
-            if (extractedTarget.startsWith('//')) {
-                // Catch protocol-relative URLs (e.g., //docs.invidious.io)
-                extractedTarget = 'https:' + extractedTarget;
-            } else if (targetBaseStr) {
-                // Catch standard relative paths (e.g., /about or image.png)
-                try {
-                    extractedTarget = new URL(extractedTarget, targetBaseStr).toString();
-                    remoteLog(`[SW] 🩹 Rescued Internal Relative: -> ${extractedTarget}`);
-                } catch(e) {
-                    // Cleanup trailing/leading slashes to prevent https:///
-                    extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
-                }
-            } else {
-                // Absolute fallback cleanup
-                extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
-            }
-        }
-
         // 4. STANDARD PROXY PASS
         return await handleProxyRequest(event.request, extractedTarget);
     })());
