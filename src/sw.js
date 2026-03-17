@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.7'; // Bumped version to force cache update
+const SW_VERSION = 'v2.0.8'; // Bumped version to force cache update
 
 // --- Remote Logger ---
 function remoteLog(msg) {
