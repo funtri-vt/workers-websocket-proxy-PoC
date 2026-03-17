@@ -396,14 +396,6 @@
         // --- 6. Stealth Cloak (about:blank) Logic ---
         const stealthBtn = document.getElementById('btn-stealth');
 
-        // Check if we are already inside an about:blank window
-        if (window.location.protocol === 'about:' || window.location.href === 'about:blank') {
-            stealthBtn.disabled = true;
-            stealthBtn.style.opacity = '0.5';
-            stealthBtn.style.cursor = 'not-allowed';
-            stealthBtn.textContent = 'Already Cloaked';
-        }
-
         stealthBtn.addEventListener('click', () => {
             if (stealthBtn.disabled) return;
 
@@ -441,7 +433,7 @@
             doc.close();
 
             // 4. Redirect the original, exposed tab
-            window.location.replace("https://classroom.google.com");
+            window.location.replace("https://google.com");
         });
     </script>
 </body>
