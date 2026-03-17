@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.8'; // Bumped version to force cache update
+const SW_VERSION = 'v2.0.9'; // Bumped version to force cache update
 
 // --- Remote Logger ---
 function remoteLog(msg) {
@@ -124,7 +124,18 @@ self.addEventListener('fetch', event => {
 
         // Case A: External Leak (Different Domain)
         if (url.origin !== self.location.origin) {
-            const intendedTarget = url.href;
+            let intendedTarget = url.href;
+
+            // 🩹 MANGLED URL RESCUE (The Invidious Fix)
+            // If the browser accidentally glued our prefix to their domain:
+            const marker = '/service/';
+            if (intendedTarget.includes(marker)) {
+                const extracted = decodeURIComponent(intendedTarget.substring(intendedTarget.indexOf(marker) + marker.length));
+                if (extracted.startsWith('http')) {
+                    intendedTarget = extracted; // Rescued the real target!
+                }
+            }
+
             const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
             remoteLog(`[SW] 🩹 External Rescue: ${url.href} -> ${safeProxyUrl}`);
 
