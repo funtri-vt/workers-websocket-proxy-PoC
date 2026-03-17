@@ -255,8 +255,15 @@ async function handleProxyRequest(request, targetUrlStr) {
                         const locationHeader = cleanHeaders.get('location');
                         if (msg.status >= 300 && msg.status < 400 && locationHeader) {
                             ws.close();
-                            const redirectUrl = new URL(locationHeader, self.location.origin).toString();
-                            resolve(Response.redirect(redirectUrl, msg.status));
+    
+                            // 1. Resolve the redirect URL relative to the site we are currently on
+                            const absoluteRedirect = new URL(locationHeader, targetUrlStr).toString();
+    
+                            // 2. Wrap it securely back into the V2 Engine tunnel
+                            const safeRedirectUrl = `${self.location.origin}/service/${encodeURIComponent(absoluteRedirect)}`;
+    
+                            // 3. Send the proxy-wrapped redirect to the browser
+                            resolve(Response.redirect(safeRedirectUrl, msg.status));
                         } else {
                             resolve(new Response(stream, {
                                 status: msg.status,
