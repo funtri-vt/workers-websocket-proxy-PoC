@@ -294,7 +294,7 @@
             });
         }
 
-        // --- 2. Routing Logic ---
+        // --- 2. Routing Logic & Omnibox Sync ---
         function loadUrl() {
             let targetUrl = input.value.trim();
             if (!targetUrl) return;
@@ -311,12 +311,45 @@
             
             // Launch the V2 tunnel inside the iframe
             frame.src = '/service/' + encodeURIComponent(targetUrl);
+            input.blur(); // Remove focus from the input box after pressing enter
         }
 
         goBtn.addEventListener('click', loadUrl);
         input.addEventListener('keypress', function (e) {
             if (e.key === 'Enter') loadUrl();
         });
+
+        // --- NEW: Omnibox URL Sync ---
+        function syncUrlBar() {
+            try {
+                // We can read this because the iframe is on our same origin!
+                const currentHref = frame.contentWindow.location.href;
+                
+                if (!currentHref || currentHref === 'about:blank') return;
+
+                const marker = '/service/';
+                const markerIndex = currentHref.indexOf(marker);
+                
+                if (markerIndex !== -1) {
+                    // Extract and decode the real target URL
+                    const rawTarget = currentHref.substring(markerIndex + marker.length);
+                    const decodedTarget = decodeURIComponent(rawTarget);
+                    
+                    // Only update the input if the user ISN'T actively typing in it
+                    if (document.activeElement !== input && input.value !== decodedTarget) {
+                        input.value = decodedTarget;
+                    }
+                }
+            } catch (e) {
+                // Silently ignore cross-origin errors (shouldn't happen with SW, but safe to catch)
+            }
+        }
+
+        // Sync when the iframe fully loads a new page
+        frame.addEventListener('load', syncUrlBar);
+        
+        // Sync every 500ms to catch hidden Single Page Application (SPA) navigations
+        setInterval(syncUrlBar, 500);
 
         // --- 3. Eruda DevTools Auto-Injector ---
         (function () {
