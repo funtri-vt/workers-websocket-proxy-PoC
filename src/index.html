@@ -107,6 +107,85 @@
             background: #fff; /* White background for the target sites by default */
         }
 
+        /* --- Settings Button --- */
+        .btn-settings {
+            background: #45475a;
+            color: var(--text-light);
+            padding: 10px 14px;
+            font-size: 16px;
+        }
+        
+        .btn-settings:hover {
+            background: var(--accent);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+
+        /* --- Modal Overlay --- */
+        .modal-overlay {
+            display: none; /* Hidden by default */
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(4px);
+        }
+        
+        .modal-overlay.active {
+            display: flex; /* Shows the modal */
+        }
+        
+        .modal-content {
+            background: var(--bg-panel);
+            padding: 24px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border: 1px solid #45475a;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h2 {
+            margin: 0;
+            font-size: 20px;
+            color: var(--accent);
+        }
+        
+        .close-btn {
+            background: transparent;
+            color: var(--text-light);
+            font-size: 24px;
+            padding: 0 8px;
+            border-radius: 4px;
+        }
+        
+        .close-btn:hover {
+            background: var(--danger);
+            color: #11111b;
+        }
+
+        /* --- Settings Rows --- */
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #313244;
+        }
+        
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
         /* --- Mobile Responsiveness --- */
         @media (max-width: 650px) {
             #top-bar {
@@ -126,20 +205,28 @@
             }
             
             .btn-clear { 
-                order: 3; 
+                order: 4; 
                 padding: 8px 12px; 
                 font-size: 12px; 
             }
 
+            .btn-settings { 
+                order: 3; 
+                padding: 8px 12px; 
+                font-size: 12px; 
+            }
+            
+
+
             /* Row 2: Full-width URL Input and Launch Button */
             #url-input { 
-                order: 4; 
+                order: 5; 
                 flex: 1 1 100%; /* Forces input to take up the whole new row */
                 margin-top: 4px;
             }
             
             .btn-go { 
-                order: 5; 
+                order: 6; 
                 flex: 1 1 100%; /* Forces button to its own full-width row for easy tapping */
                 padding: 12px;
             }
@@ -152,10 +239,29 @@
         <div class="brand">V2 ENGINE</div>
         <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
         <button class="btn-go" id="go-btn">Launch</button>
+        <button class="btn-settings" id="settings-btn" title="Settings">⚙️</button>
         <button class="btn-clear" id="clear-btn">Clear Cache</button>
         <div id="status-indicator">SW: Offline</div>
     </div>
   
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Engine Settings</h2>
+                <button class="close-btn" id="close-settings">&times;</button>
+            </div>
+            
+            <div class="setting-row">
+                <span>Block Ads & Trackers</span>
+                <input type="checkbox" id="toggle-adblock" checked>
+            </div>
+            <div class="setting-row">
+                <span>Stealth Cloak (about:blank)</span>
+                <button id="btn-stealth" style="padding: 6px 12px; background: var(--accent); color: #11111b; font-size: 12px;">Launch</button>
+            </div>
+        </div>
+    </div>
+
     <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             allow="pointer-lock; keyboard-map; fullscreen"
             tabindex="0"
@@ -264,6 +370,27 @@
                 console.error('[Host] Error clearing cache:', err);
                 statusEl.textContent = 'Clear Error';
                 statusEl.style.color = 'var(--danger)';
+            }
+        });
+        // --- 5. Settings Modal Logic ---
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsModal = document.getElementById('settings-modal');
+        const closeSettings = document.getElementById('close-settings');
+
+        // Open Modal
+        settingsBtn.addEventListener('click', () => {
+            settingsModal.classList.add('active');
+        });
+
+        // Close Modal via Button
+        closeSettings.addEventListener('click', () => {
+            settingsModal.classList.remove('active');
+        });
+
+        // Close Modal by clicking outside the box
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) {
+                settingsModal.classList.remove('active');
             }
         });
     </script>
