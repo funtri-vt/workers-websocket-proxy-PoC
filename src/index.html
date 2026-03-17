@@ -262,7 +262,7 @@
         </div>
     </div>
 
-    <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+    <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
             allow="pointer-lock; keyboard-map; fullscreen"
             tabindex="0"
             id="frame">
@@ -426,7 +426,7 @@
                         </style>
                     </head>
                     <body>
-                        <iframe src="${PROXY_URL}"></iframe>
+                        <iframe src="${PROXY_URL}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"></iframe>
                     </body>
                 </html>
             `);

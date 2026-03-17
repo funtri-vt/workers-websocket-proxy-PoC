@@ -151,16 +151,20 @@ self.addEventListener('fetch', event => {
         
         if (!extractedTarget.startsWith('http')) {
             if (extractedTarget.startsWith('//')) {
+                // Catch protocol-relative URLs (e.g., //docs.invidious.io)
                 extractedTarget = 'https:' + extractedTarget;
             } else if (targetBaseStr) {
+                // Catch standard relative paths (e.g., /about or image.png)
                 try {
                     extractedTarget = new URL(extractedTarget, targetBaseStr).toString();
                     remoteLog(`[SW] 🩹 Rescued Internal Relative: -> ${extractedTarget}`);
                 } catch(e) {
-                    extractedTarget = 'https://' + extractedTarget;
+                    // Cleanup trailing/leading slashes to prevent https:///
+                    extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
                 }
             } else {
-                extractedTarget = 'https://' + extractedTarget;
+                // Absolute fallback cleanup
+                extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
             }
         }
 
