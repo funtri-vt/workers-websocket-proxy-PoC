@@ -149,13 +149,9 @@ async function handleProxyRequest(request, targetUrlStr) {
 
     // --- 🛡️ AD/TRACKER BLOCKER ---
     const blockList = [
-        'doubleclick.net',
-        'google-analytics.com',
-        'googlesyndication.com',
-        'amazon-adsystem.com',
-        'trackersimulator.org'
+        'doubleclick.net', 'google-analytics.com', 'googlesyndication.com',
+        'amazon-adsystem.com', 'trackersimulator.org'
     ];
-    
     try {
         const targetHost = new URL(targetUrlStr).hostname;
         if (blockList.some(domain => targetHost.includes(domain))) {
@@ -163,9 +159,27 @@ async function handleProxyRequest(request, targetUrlStr) {
             return new Response(null, { status: 204 }); 
         }
     } catch(e) {}
+
+    // --- 🗄️ STATIC ASSET BROWSER CACHE ---
+    // Identify static files that are safe to cache
+    const isStaticAsset = /\.(css|js|png|jpg|jpeg|gif|webp|svg|woff|woff2|ttf|ico)(\?.*)?$/i.test(targetUrlStr);
+    let assetCache = null;
+
+    if (isStaticAsset && request.method === 'GET') {
+        try {
+            assetCache = await caches.open('v2-engine-cache');
+            const cachedResponse = await assetCache.match(targetUrlStr);
+            if (cachedResponse) {
+                remoteLog(`[SW] ⚡ Cache Hit: ${targetUrlStr}`);
+                return cachedResponse; // Return instantly from local storage!
+            }
+        } catch (e) {
+            remoteLog(`[SW] Cache read error: ${e}`);
+        }
+    }
         
     remoteLog(`[SW] 🚀 Proxying: ${targetUrlStr}`);
-    
+
     try {
         // --- 📦 PAYLOAD CHUNKER ---
         let bodyBase64 = null;
@@ -255,20 +269,25 @@ async function handleProxyRequest(request, targetUrlStr) {
                         const locationHeader = cleanHeaders.get('location');
                         if (msg.status >= 300 && msg.status < 400 && locationHeader) {
                             ws.close();
-    
-                            // 1. Resolve the redirect URL relative to the site we are currently on
                             const absoluteRedirect = new URL(locationHeader, targetUrlStr).toString();
-    
-                            // 2. Wrap it securely back into the V2 Engine tunnel
                             const safeRedirectUrl = `${self.location.origin}/service/${encodeURIComponent(absoluteRedirect)}`;
-    
-                            // 3. Send the proxy-wrapped redirect to the browser
                             resolve(Response.redirect(safeRedirectUrl, msg.status));
                         } else {
-                            resolve(new Response(stream, {
+                            const finalResponse = new Response(stream, {
                                 status: msg.status,
                                 headers: cleanHeaders
-                            }));
+                            });
+
+                            // --- 💾 SAVE TO CACHE ON SUCCESS ---
+                            if (isStaticAsset && msg.status === 200 && assetCache) {
+                                // Clone the response stream before returning it to the browser
+                                const cacheCopy = finalResponse.clone();
+                                assetCache.put(targetUrlStr, cacheCopy).catch(err => {
+                                    remoteLog(`[SW] Cache write error: ${err}`);
+                                });
+                            }
+
+                            resolve(finalResponse);
                         }
                     } else if (msg.type === 'end') {
                         if (streamController) try { streamController.close(); } catch(e) {}
