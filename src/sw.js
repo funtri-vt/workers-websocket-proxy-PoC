@@ -102,23 +102,28 @@ self.addEventListener('fetch', event => {
 
     event.respondWith((async () => {
         // --- DEEP REFERER RESOLUTION ---
-        let targetBaseStr = null;
+        // --- SAFE EXTRACTION HELPER ---
+        // This prevents the browser from collapsing 'https://' into 'https:/'
+        function extractTarget(urlString) {
+            if (!urlString) return null;
+            const marker = '/service/';
+            const idx = urlString.indexOf(marker);
+            if (idx === -1) return null;
+            return decodeURIComponent(urlString.substring(idx + marker.length));
+        }
+
+        // --- DEEP REFERER RESOLUTION ---
+        let targetBaseStr = extractTarget(event.request.referrer);
         
-        const referer = event.request.referrer;
-        if (referer && referer.includes('/service/')) {
-            targetBaseStr = decodeURIComponent(referer.substring(referer.indexOf('/service/') + 9));
-        } else if (event.clientId) {
+        if (!targetBaseStr && event.clientId) {
             const client = await self.clients.get(event.clientId);
-            if (client && client.url.includes('/service/')) {
-                targetBaseStr = decodeURIComponent(client.url.substring(client.url.indexOf('/service/') + 9));
-            }
+            if (client) targetBaseStr = extractTarget(client.url);
         }
 
         // --- STRICT ROUTING LOGIC ---
 
         // Case A: External Leak (Different Domain)
         if (url.origin !== self.location.origin) {
-            // It's a direct 3rd party request. Wrap it entirely, even if it has /service/ in it.
             const intendedTarget = url.href;
             const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
             remoteLog(`[SW] 🩹 External Rescue: ${url.href} -> ${safeProxyUrl}`);
@@ -133,8 +138,8 @@ self.addEventListener('fetch', event => {
 
         // Case B: Internal Request (Our Domain)
         if (url.pathname.startsWith('/service/')) {
-            // It's a valid proxy command aimed at us
-            let extractedTarget = decodeURIComponent(url.pathname.substring(9)) + url.search;
+            // Use the raw url.href instead of url.pathname to prevent // collapsing!
+            let extractedTarget = extractTarget(url.href) || '';
             
             // Cleanup missing protocols
             if (!extractedTarget.startsWith('http')) {
@@ -153,12 +158,13 @@ self.addEventListener('fetch', event => {
             
             // 4. STANDARD PROXY PASS
             return await handleProxyRequest(event.request, extractedTarget);
+            
         } else {
-            // Case C: Internal Leak (Our domain, but missing the /service/ prefix)
-            // Example: A website requests /assets/style.css
+            // Case C: Internal Leak (Our domain, missing /service/)
             let intendedTarget = null;
             if (targetBaseStr) {
                 try {
+                    // targetBaseStr is now safely guaranteed to have both slashes
                     const proxiedOrigin = new URL(targetBaseStr).origin;
                     intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
                 } catch (e) {
