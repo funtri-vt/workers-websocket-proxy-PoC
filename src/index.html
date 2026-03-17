@@ -35,6 +35,7 @@
             align-items: center; 
             box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
             z-index: 10; 
+            flex-wrap: wrap; 
         }
         
         .brand { 
@@ -104,6 +105,44 @@
             border: none; 
             width: 100%; 
             background: #fff; /* White background for the target sites by default */
+        }
+
+        /* --- Mobile Responsiveness --- */
+        @media (max-width: 650px) {
+            #top-bar {
+                padding: 10px;
+                gap: 8px;
+            }
+
+            /* Row 1: Brand, Status, and Clear Button */
+            .brand { 
+                order: 1; 
+                font-size: 16px; 
+            }
+            
+            #status-indicator { 
+                order: 2; 
+                margin-left: auto; /* Pushes the clear button to the right */
+            }
+            
+            .btn-clear { 
+                order: 3; 
+                padding: 8px 12px; 
+                font-size: 12px; 
+            }
+
+            /* Row 2: Full-width URL Input and Launch Button */
+            #url-input { 
+                order: 4; 
+                flex: 1 1 100%; /* Forces input to take up the whole new row */
+                margin-top: 4px;
+            }
+            
+            .btn-go { 
+                order: 5; 
+                flex: 1 1 100%; /* Forces button to its own full-width row for easy tapping */
+                padding: 12px;
+            }
         }
     </style>
 </head>
