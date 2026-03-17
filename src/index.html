@@ -80,6 +80,17 @@
             background: var(--accent-hover); 
             transform: translateY(-1px); 
         }
+        
+        .btn-clear {
+            background: #45475a;
+            color: var(--text-light);
+        }
+        
+        .btn-clear:hover {
+            background: var(--danger);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
 
         #status-indicator {
             font-size: 12px;
@@ -102,6 +113,7 @@
         <div class="brand">V2 ENGINE</div>
         <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
         <button class="btn-go" id="go-btn">Launch</button>
+        <button class="btn-clear" id="clear-btn">Clear Cache</button>
         <div id="status-indicator">SW: Offline</div>
     </div>
   
@@ -174,6 +186,47 @@
             };
             document.head.appendChild(script);
         })();
+
+        const clearBtn = document.getElementById('clear-btn');
+
+        // --- 4. Cache & Storage Cleanup ---
+        clearBtn.addEventListener('click', async () => {
+            const originalStatus = statusEl.textContent;
+            const originalColor = statusEl.style.color;
+            
+            try {
+                // 1. Delete the static asset cache
+                const cacheDeleted = await caches.delete('v2-engine-cache');
+                
+                // 2. Delete the persistent cookies database
+                const idbRequest = indexedDB.deleteDatabase('ProxyStorage');
+                
+                idbRequest.onsuccess = () => {
+                    console.log('[Host] 🧹 V2 Engine Cache & Storage cleared successfully.');
+                    
+                    // Flash the status indicator
+                    statusEl.textContent = 'Cleared!';
+                    statusEl.style.color = 'var(--success)';
+                    
+                    setTimeout(() => {
+                        statusEl.textContent = originalStatus;
+                        statusEl.style.color = originalColor;
+                    }, 2000);
+                };
+                
+                idbRequest.onerror = () => {
+                    console.error('[Host] ⚠️ Failed to delete Cookie DB.');
+                };
+                
+                // Optional: Force a reload of the iframe to clear memory
+                frame.src = 'about:blank';
+                
+            } catch (err) {
+                console.error('[Host] Error clearing cache:', err);
+                statusEl.textContent = 'Clear Error';
+                statusEl.style.color = 'var(--danger)';
+            }
+        });
     </script>
 </body>
 </html>
