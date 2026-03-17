@@ -9,15 +9,47 @@ function remoteLog(msg) {
 }
 
 // --------------------------------------------------------
-// Persistent Cookie Storage (IndexedDB)
+// Persistent Storage (IndexedDB) - v2
 // --------------------------------------------------------
 const dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open('ProxyStorage', 1);
+    const request = indexedDB.open('ProxyStorage', 2); // Bumped to v2
     request.onupgradeneeded = (e) => {
-        e.target.result.createObjectStore('cookies');
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies');
+        if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
     };
     request.onsuccess = (e) => resolve(e.target.result);
     request.onerror = () => reject('IDB Error');
+});
+
+// --- Settings Memory Cache ---
+let adBlockCache = null; // Memory variable so we don't spam the database
+
+async function isAdBlockEnabled() {
+    if (adBlockCache !== null) return adBlockCache; // Return instantly if already loaded
+    
+    try {
+        const db = await dbPromise;
+        return new Promise((resolve) => {
+            const tx = db.transaction('settings', 'readonly');
+            const req = tx.objectStore('settings').get('adblock');
+            req.onsuccess = () => {
+                adBlockCache = req.result !== undefined ? req.result : true; // Default to true
+                resolve(adBlockCache);
+            };
+            req.onerror = () => resolve(true);
+        });
+    } catch (e) { return true; }
+}
+
+// Listen for live UI updates
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'update-setting') {
+        if (event.data.key === 'adblock') {
+            adBlockCache = event.data.value; // Instantly update memory
+            remoteLog(`[SW] ⚙️ AdBlock set to: ${adBlockCache}`);
+        }
+    }
 });
 
 async function saveCookies(domain, newCookies) {
@@ -148,17 +180,20 @@ async function handleProxyRequest(request, targetUrlStr) {
     }
 
     // --- 🛡️ AD/TRACKER BLOCKER ---
-    const blockList = [
-        'doubleclick.net', 'google-analytics.com', 'googlesyndication.com',
-        'amazon-adsystem.com', 'trackersimulator.org'
-    ];
-    try {
-        const targetHost = new URL(targetUrlStr).hostname;
-        if (blockList.some(domain => targetHost.includes(domain))) {
-            remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
-            return new Response(null, { status: 204 }); 
-        }
-    } catch(e) {}
+    const blockAds = await isAdBlockEnabled();
+    if (blockAds) {
+        const blockList = [
+            'doubleclick.net', 'google-analytics.com', 'googlesyndication.com',
+            'amazon-adsystem.com', 'trackersimulator.org'
+        ];
+        try {
+            const targetHost = new URL(targetUrlStr).hostname;
+            if (blockList.some(domain => targetHost.includes(domain))) {
+                remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
+                return new Response(null, { status: 204 }); 
+            }
+        } catch(e) {}
+    }
 
     // --- 🗄️ STATIC ASSET BROWSER CACHE ---
     // Identify static files that are safe to cache

@@ -435,6 +435,49 @@
             // 4. Redirect the original, exposed tab
             window.location.replace("https://google.com");
         });
+
+        // --- 7. Settings: Ad-Blocker Toggle ---
+        const adblockToggle = document.getElementById('toggle-adblock');
+
+        // 1. Initialize Database and Load Saved State
+        const dbReq = indexedDB.open('ProxyStorage', 2);
+        dbReq.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies');
+            if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+        };
+        dbReq.onsuccess = (e) => {
+            const db = e.target.result;
+            const tx = db.transaction('settings', 'readonly');
+            const req = tx.objectStore('settings').get('adblock');
+            req.onsuccess = () => {
+                if (req.result !== undefined) {
+                    adblockToggle.checked = req.result;
+                }
+            };
+        };
+
+        // 2. Handle User Toggling
+        adblockToggle.addEventListener('change', (e) => {
+            const isEnabled = e.target.checked;
+            
+            // Write to IndexedDB permanently
+            const dbReq2 = indexedDB.open('ProxyStorage', 2);
+            dbReq2.onsuccess = (ev) => {
+                const db = ev.target.result;
+                const tx = db.transaction('settings', 'readwrite');
+                tx.objectStore('settings').put(isEnabled, 'adblock');
+            };
+
+            // Send instant message to update SW memory
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'update-setting',
+                    key: 'adblock',
+                    value: isEnabled
+                });
+            }
+        });
     </script>
 </body>
 </html>
