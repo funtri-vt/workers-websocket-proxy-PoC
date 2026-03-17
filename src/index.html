@@ -393,6 +393,56 @@
                 settingsModal.classList.remove('active');
             }
         });
+        // --- 6. Stealth Cloak (about:blank) Logic ---
+        const stealthBtn = document.getElementById('btn-stealth');
+
+        // Check if we are already inside an about:blank window
+        if (window.location.protocol === 'about:' || window.location.href === 'about:blank') {
+            stealthBtn.disabled = true;
+            stealthBtn.style.opacity = '0.5';
+            stealthBtn.style.cursor = 'not-allowed';
+            stealthBtn.textContent = 'Already Cloaked';
+        }
+
+        stealthBtn.addEventListener('click', () => {
+            if (stealthBtn.disabled) return;
+
+            // Agnostic URL: dynamically grab wherever the engine is currently hosted
+            const PROXY_URL = window.location.href; 
+            
+            // 1. Open the blank window
+            let win = window.open('about:blank', '_blank');
+            
+            // 2. Alert if popups are blocked
+            if (!win || win.closed || typeof win.closed === 'undefined') {
+                alert("Popup blocker prevented the launch! Please allow popups for this site.");
+                return;
+            }
+
+            // 3. Inject the disguised iframe into the blank document
+            let doc = win.document;
+            doc.open();
+            doc.write(`
+                <!DOCTYPE html>
+                <html>
+                    <head>
+                        <title>Google Drive</title> 
+                        <link rel="icon" href="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png"> 
+                        <style>
+                            body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #121212; }
+                            iframe { border: none; width: 100%; height: 100%; }
+                        </style>
+                    </head>
+                    <body>
+                        <iframe src="${PROXY_URL}"></iframe>
+                    </body>
+                </html>
+            `);
+            doc.close();
+
+            // 4. Redirect the original, exposed tab
+            window.location.replace("https://classroom.google.com");
+        });
     </script>
 </body>
 </html>
