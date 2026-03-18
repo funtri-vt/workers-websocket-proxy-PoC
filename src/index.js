@@ -89,6 +89,19 @@ class ScriptInjector {
 					if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(PROXY_BASE)) return url;
 					if (url.startsWith('/service/')) return url;
 					
+					// 🩹 CLIENT-SIDE GLUED URL RESCUE
+					// If Wikipedia's JS accidentally prepended its own domain to our proxy path
+					const marker = '/service/';
+					const idx = url.indexOf(marker);
+					if (idx !== -1) {
+						try {
+							const extracted = decodeURIComponent(url.substring(idx + marker.length));
+							if (extracted.startsWith('http')) {
+								return PROXY_BASE + encodeURIComponent(extracted);
+							}
+						} catch(e) {}
+					}
+					
 					let finalUrl = url;
 					if (url.startsWith('//')) finalUrl = window.location.protocol + url;
 
@@ -319,11 +332,11 @@ export default {
 							
 							if (lowerKey === "location") {
 								try {
-									const absoluteLocation = new URL(value, targetUrl).toString();
-									headersOut[key] = "/service/" + encodeURIComponent(absoluteLocation);
-								} catch (e) {
-									headersOut[key] = value;
-								}
+        							// Just resolve the absolute path. The Service Worker will wrap it!
+        							headersOut[key] = new URL(value, targetUrl).toString();
+    							} catch (e) {
+        							headersOut[key] = value;
+    							}
 							} else if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
 								headersOut[key] = value;
 							}
