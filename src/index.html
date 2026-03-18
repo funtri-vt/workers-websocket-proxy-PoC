@@ -201,6 +201,22 @@
             color: #11111b;
             transform: translateY(-1px);
         }
+        /* --- Loading Spinner --- */
+        #loader {
+            display: none; /* Hidden by default */
+            width: 18px;
+            height: 18px;
+            border: 3px solid #45475a;
+            border-top: 3px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 8px; /* Spacing between the buttons and the input bar */
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
 
         /* --- Mobile Responsiveness --- */
         @media (max-width: 650px) {
@@ -261,6 +277,8 @@
         <button class="btn-nav" id="back-btn" title="Go Back">◀</button>
         <button class="btn-nav" id="fwd-btn" title="Go Forward">▶</button>
 
+        <div id="loader"></div>
+
         <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
         <button class="btn-go" id="go-btn">Launch</button>
         <button class="btn-settings" id="settings-btn" title="Settings">⚙️</button>
@@ -297,7 +315,7 @@
         const input = document.getElementById('url-input');
         const goBtn = document.getElementById('go-btn');
         const frame = document.getElementById('frame');
-
+        const loader = document.getElementById('loader');
         const backBtn = document.getElementById('back-btn');
         const fwdBtn = document.getElementById('fwd-btn');
 
@@ -353,6 +371,9 @@
 
             console.log(`[Host] 🚀 Loading into iframe: ${targetUrl}`);
             
+            // Show the loading spinner
+            loader.style.display = 'block';
+
             // Launch the V2 tunnel inside the iframe
             frame.src = '/service/' + encodeURIComponent(targetUrl);
             input.blur(); // Remove focus from the input box after pressing enter
@@ -389,8 +410,12 @@
             }
         }
 
-        // Sync when the iframe fully loads a new page
-        frame.addEventListener('load', syncUrlBar);
+        // Sync when the iframe fully loads a new page, and hide the loader
+        frame.addEventListener('load', () => {
+            loader.style.display = 'none';
+            syncUrlBar();
+        });
+        
         
         // Sync every 500ms to catch hidden Single Page Application (SPA) navigations
         setInterval(syncUrlBar, 500);
