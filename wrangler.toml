@@ -15,6 +15,3 @@ invocation_logs = true
 [[migrations]]
 tag = "v2"
 deleted_classes = ["WebSocketProxy"]
-
-[env.v2]
-name = "websocket-proxy-v2-proof-of-concept"
