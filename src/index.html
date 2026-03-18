@@ -185,6 +185,22 @@
         .setting-row:last-child {
             border-bottom: none;
         }
+        /* --- Navigation Buttons --- */
+        .btn-nav {
+            background: #45475a;
+            color: var(--text-light);
+            padding: 10px 14px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-nav:hover {
+            background: var(--accent);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
 
         /* --- Mobile Responsiveness --- */
         @media (max-width: 650px) {
@@ -200,33 +216,37 @@
             }
             
             #status-indicator { 
-                order: 2; 
+                order: 3; 
                 margin-left: auto; /* Pushes the clear button to the right */
             }
             
             .btn-clear { 
-                order: 4; 
+                order: 5; 
                 padding: 8px 12px; 
                 font-size: 12px; 
             }
 
             .btn-settings { 
-                order: 3; 
+                order: 4; 
                 padding: 8px 12px; 
                 font-size: 12px; 
             }
             
-
+            .btn-nav { 
+                order: 2; 
+                padding: 8px 12px; 
+                font-size: 12px; 
+            }
 
             /* Row 2: Full-width URL Input and Launch Button */
             #url-input { 
-                order: 5; 
+                order: 6; 
                 flex: 1 1 100%; /* Forces input to take up the whole new row */
                 margin-top: 4px;
             }
             
             .btn-go { 
-                order: 6; 
+                order: 7; 
                 flex: 1 1 100%; /* Forces button to its own full-width row for easy tapping */
                 padding: 12px;
             }
@@ -237,6 +257,10 @@
   
     <div id="top-bar">
         <div class="brand">V2 ENGINE</div>
+
+        <button class="btn-nav" id="back-btn" title="Go Back">◀</button>
+        <button class="btn-nav" id="fwd-btn" title="Go Forward">▶</button>
+
         <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
         <button class="btn-go" id="go-btn">Launch</button>
         <button class="btn-settings" id="settings-btn" title="Settings">⚙️</button>
@@ -273,6 +297,26 @@
         const input = document.getElementById('url-input');
         const goBtn = document.getElementById('go-btn');
         const frame = document.getElementById('frame');
+
+        const backBtn = document.getElementById('back-btn');
+        const fwdBtn = document.getElementById('fwd-btn');
+
+        // --- History Navigation ---
+        backBtn.addEventListener('click', () => {
+            try {
+                frame.contentWindow.history.back();
+            } catch (e) {
+                console.warn('[Host] Could not navigate back:', e);
+            }
+        });
+
+        fwdBtn.addEventListener('click', () => {
+            try {
+                frame.contentWindow.history.forward();
+            } catch (e) {
+                console.warn('[Host] Could not navigate forward:', e);
+            }
+        });
 
         // --- 1. Register the V2 Service Worker & Listen for Logs ---
         if ('serviceWorker' in navigator) {
@@ -319,7 +363,7 @@
             if (e.key === 'Enter') loadUrl();
         });
 
-        // --- NEW: Omnibox URL Sync ---
+        // --- Omnibox URL Sync ---
         function syncUrlBar() {
             try {
                 // We can read this because the iframe is on our same origin!
