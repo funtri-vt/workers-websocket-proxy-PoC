@@ -248,21 +248,26 @@ export default {
 				}
 			};
 
-			// 🛡️ THE PAYLOAD SLICER: Prevents Cloudflare from crashing the WS on large assets
-			const sendChunked = (data) => {
+			// 🛡️ THE PAYLOAD SLICER (Now with Backpressure Handling)
+			const sendChunked = async (data) => {
 				if (server.readyState !== 1) return;
-				const CHUNK_SIZE = 64 * 1024; // 64KB safe slices
+				const CHUNK_SIZE = 32 * 1024; // Dropped to 32KB to be extra safe
 				
 				if (data.byteLength > CHUNK_SIZE) {
 					for (let i = 0; i < data.byteLength; i += CHUNK_SIZE) {
 						if (server.readyState !== 1) break;
 						try {
-							// Subarray is zero-copy and highly performant
-							server.send(data.subarray(i, i + CHUNK_SIZE)); 
+							server.send(data.subarray(i, i + CHUNK_SIZE)); 
+							// 🚦 THE FIX: Yield to the event loop so Cloudflare's buffer can drain
+							await new Promise(resolve => setTimeout(resolve, 2));
 						} catch(e) {}
 					}
 				} else {
-					try { server.send(data); } catch(e) {}
+					try { 
+						server.send(data); 
+						// Tiny yield for normal chunks if they stream in really fast
+						await new Promise(resolve => setTimeout(resolve, 1));
+					} catch(e) {}
 				}
 			};
 
@@ -382,7 +387,7 @@ export default {
 										if (server.readyState !== 1) break;
 										const { done, value } = await reader.read();
 										if (done) break;
-										sendChunked(value); // Safe Slicer
+										await sendChunked(value); // Safe Slicer
 									}
 								} finally {
 									reader.releaseLock();
@@ -395,7 +400,7 @@ export default {
 									if (server.readyState !== 1) break;
 									const { done, value } = await reader.read();
 									if (done) break;
-									sendChunked(value); // Safe Slicer
+									await sendChunked(value); // Safe Slicer
 								}
 							} finally {
 								reader.releaseLock();
