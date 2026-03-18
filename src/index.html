@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V3 Proxy Engine</title>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --bg-panel: #1e1e2e;
+            --bg-input: #313244;
+            --text-light: #cdd6f4;
+            --accent: #89b4fa;
+            --accent-hover: #74c7ec;
+            --danger: #f38ba8;
+            --success: #a6e3a1;
+        }
+        
+        body { 
+            margin: 0; 
+            font-family: system-ui, -apple-system, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            background-color: var(--bg-dark); 
+            color: var(--text-light);
+            overflow: hidden; 
+        }
+        
+        #top-bar { 
+            padding: 12px 20px; 
+            background: var(--bg-panel); 
+            display: flex; 
+            gap: 12px; 
+            align-items: center; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
+            z-index: 10; 
+            flex-wrap: wrap; 
+        }
+        
+        .brand { 
+            font-weight: 800; 
+            letter-spacing: 1px; 
+            color: var(--accent); 
+            font-size: 18px;
+            white-space: nowrap;
+        }
+        
+        #url-input { 
+            flex-grow: 1; 
+            padding: 10px 16px; 
+            font-size: 15px; 
+            border-radius: 8px; 
+            border: 1px solid #45475a; 
+            background: var(--bg-input); 
+            color: var(--text-light); 
+            outline: none; 
+            transition: border 0.2s; 
+        }
+        
+        #url-input:focus { 
+            border-color: var(--accent); 
+        }
+        
+        button { 
+            padding: 10px 20px; 
+            font-size: 14px; 
+            font-weight: 600; 
+            cursor: pointer; 
+            border-radius: 8px; 
+            border: none; 
+            transition: all 0.2s ease; 
+        }
+        
+        .btn-go { 
+            background: var(--accent); 
+            color: #11111b; 
+        }
+        
+        .btn-go:hover { 
+            background: var(--accent-hover); 
+            transform: translateY(-1px); 
+        }
+        
+        .btn-clear {
+            background: #45475a;
+            color: var(--text-light);
+        }
+        
+        .btn-clear:hover {
+            background: var(--danger);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+
+        #status-indicator {
+            font-size: 12px;
+            font-weight: bold;
+            color: var(--danger);
+            white-space: nowrap;
+        }
+        
+        #frame { 
+            flex-grow: 1; 
+            border: none; 
+            width: 100%; 
+            background: var(--bg-dark); /* Full dark mode for initial page */
+            transition: background 0.3s ease;
+        }
+
+        /* Dynamically applied once a site loads to prevent unreadable transparent sites */
+        #frame.site-loaded {
+            background: #fff; 
+        }
+
+        /* --- Settings Button --- */
+        .btn-settings {
+            background: #45475a;
+            color: var(--text-light);
+            padding: 10px 14px;
+            font-size: 16px;
+        }
+        
+        .btn-settings:hover {
+            background: var(--accent);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+
+        /* --- Modal Overlay --- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(4px);
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: var(--bg-panel);
+            padding: 24px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border: 1px solid #45475a;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h2 {
+            margin: 0;
+            font-size: 20px;
+            color: var(--accent);
+        }
+        
+        .close-btn {
+            background: transparent;
+            color: var(--text-light);
+            font-size: 24px;
+            padding: 0 8px;
+            border-radius: 4px;
+        }
+        
+        .close-btn:hover {
+            background: var(--danger);
+            color: #11111b;
+        }
+
+        /* --- Settings Rows --- */
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #313244;
+        }
+        
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
+        /* --- Navigation Buttons --- */
+        .btn-nav {
+            background: #45475a;
+            color: var(--text-light);
+            padding: 10px 14px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-nav:hover {
+            background: var(--accent);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+
+        /* --- Loading Spinner --- */
+        #loader {
+            display: none;
+            width: 18px;
+            height: 18px;
+            border: 3px solid #45475a;
+            border-top: 3px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* --- Mobile Responsiveness --- */
+        @media (max-width: 650px) {
+            #top-bar { padding: 10px; gap: 8px; }
+            .brand { order: 1; font-size: 16px; }
+            #loader { order: 3; }
+            #status-indicator { order: 3; margin-left: auto; }
+            .btn-clear { order: 5; padding: 8px 12px; font-size: 12px; }
+            .btn-settings { order: 4; padding: 8px 12px; font-size: 12px; }
+            .btn-nav { order: 2; padding: 8px 12px; font-size: 12px; }
+            #url-input { order: 6; flex: 1 1 100%; margin-top: 4px; }
+            .btn-go { order: 7; flex: 1 1 100%; padding: 12px; }
+        }
+    </style>
+</head>
+<body>
+  
+    <div id="top-bar">
+        <div class="brand">V3 ENGINE</div>
+
+        <button class="btn-nav" id="back-btn" title="Go Back">◀</button>
+        <button class="btn-nav" id="fwd-btn" title="Go Forward">▶</button>
+
+        <div id="loader"></div>
+
+        <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
+        <button class="btn-go" id="go-btn">Launch</button>
+        <button class="btn-settings" id="settings-btn" title="Settings">⚙️</button>
+        <button class="btn-clear" id="clear-btn">Clear Cache</button>
+        <div id="status-indicator">SW: Offline</div>
+    </div>
+  
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Engine Settings</h2>
+                <button class="close-btn" id="close-settings">&times;</button>
+            </div>
+            
+            <div class="setting-row">
+                <span>Block Ads & Trackers</span>
+                <input type="checkbox" id="toggle-adblock" checked>
+            </div>
+            <div class="setting-row">
+                <span>Stealth Cloak (about:blank)</span>
+                <button id="btn-stealth" style="padding: 6px 12px; background: var(--accent); color: #11111b; font-size: 12px;">Launch</button>
+            </div>
+        </div>
+    </div>
+
+    <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+            allow="pointer-lock; keyboard-map; fullscreen"
+            tabindex="0"
+            id="frame">
+    </iframe>
+
+    <script>
+        const statusEl = document.getElementById('status-indicator');
+        const input = document.getElementById('url-input');
+        const goBtn = document.getElementById('go-btn');
+        const frame = document.getElementById('frame');
+        const loader = document.getElementById('loader');
+        const backBtn = document.getElementById('back-btn');
+        const fwdBtn = document.getElementById('fwd-btn');
+
+        // --- History Navigation ---
+        backBtn.addEventListener('click', () => {
+            try { frame.contentWindow.history.back(); } 
+            catch (e) { console.warn('[Host] Could not navigate back:', e); }
+        });
+
+        fwdBtn.addEventListener('click', () => {
+            try { frame.contentWindow.history.forward(); } 
+            catch (e) { console.warn('[Host] Could not navigate forward:', e); }
+        });
+
+        // --- 1. Register the V3 Service Worker ---
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+                .then(registration => { 
+                    statusEl.textContent = 'SW: Active'; 
+                    statusEl.style.color = 'var(--success)'; 
+                })
+                .catch(err => { 
+                    statusEl.textContent = 'SW: Failed'; 
+                    console.error('SW Failed:', err);
+                });
+
+            navigator.serviceWorker.addEventListener('message', event => {
+                if (event.data && event.data.type === 'sw-log') {
+                    console.log(`%c[SW Broadcast]`, 'color: #a6e3a1; font-weight: bold;', event.data.message);
+                }
+            });
+        }
+
+        // --- 2. Routing Logic & Omnibox Sync ---
+        function loadUrl() {
+            let targetUrl = input.value.trim();
+            if (!targetUrl) return;
+            
+            if (targetUrl.includes(' ') || !targetUrl.includes('.')) {
+                targetUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(targetUrl);
+                console.log(`[Host] 🔍 Search detected. Routing to DuckDuckGo...`);
+            } else if (!/^https?:\/\//i.test(targetUrl)) {
+                targetUrl = 'https://' + targetUrl;
+            }
+
+            console.log(`[Host] 🚀 Loading into iframe: ${targetUrl}`);
+            
+            loader.style.display = 'block';
+            frame.classList.add('site-loaded'); // Swap to white background for website compatibility
+
+            // Launch the V3 tunnel
+            frame.src = '/service/' + encodeURIComponent(targetUrl);
+            input.blur(); 
+        }
+
+        goBtn.addEventListener('click', loadUrl);
+        input.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') loadUrl();
+        });
+
+        function syncUrlBar() {
+            try {
+                const currentHref = frame.contentWindow.location.href;
+                if (!currentHref || currentHref === 'about:blank') return;
+
+                const marker = '/service/';
+                const markerIndex = currentHref.indexOf(marker);
+                
+                if (markerIndex !== -1) {
+                    const rawTarget = currentHref.substring(markerIndex + marker.length);
+                    const decodedTarget = decodeURIComponent(rawTarget);
+                    
+                    if (document.activeElement !== input && input.value !== decodedTarget) {
+                        input.value = decodedTarget;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        frame.addEventListener('load', () => {
+            loader.style.display = 'none';
+            syncUrlBar();
+        });
+        
+        setInterval(syncUrlBar, 500);
+
+        // --- 3. Eruda DevTools Auto-Injector ---
+        (function () {
+            var script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/eruda/eruda.min.js';
+            script.onload = function () { 
+                eruda.init({ defaults: { theme: 'Dark' } }); 
+                console.log('[Host] Eruda DevTools injected & ready.');
+            };
+            document.head.appendChild(script);
+        })();
+
+        // --- 4. Cache & Storage Cleanup (Updated to V3) ---
+        const clearBtn = document.getElementById('clear-btn');
+        clearBtn.addEventListener('click', async () => {
+            const originalStatus = statusEl.textContent;
+            const originalColor = statusEl.style.color;
+            
+            try {
+                // Delete the V3 cache and V3 database
+                await caches.delete('v3-engine-cache');
+                const idbRequest = indexedDB.deleteDatabase('ProxyStorageV3');
+                
+                idbRequest.onsuccess = () => {
+                    console.log('[Host] 🧹 V3 Engine Cache & Storage cleared successfully.');
+                    
+                    statusEl.textContent = 'Cleared!';
+                    statusEl.style.color = 'var(--success)';
+                    
+                    setTimeout(() => {
+                        statusEl.textContent = originalStatus;
+                        statusEl.style.color = originalColor;
+                    }, 2000);
+                };
+                
+                idbRequest.onerror = () => {
+                    console.error('[Host] ⚠️ Failed to delete Cookie DB.');
+                };
+                
+                frame.src = 'about:blank';
+                frame.classList.remove('site-loaded'); // Revert to pure dark mode
+                
+            } catch (err) {
+                console.error('[Host] Error clearing cache:', err);
+                statusEl.textContent = 'Clear Error';
+                statusEl.style.color = 'var(--danger)';
+            }
+        });
+
+        // --- 5. Settings Modal Logic ---
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsModal = document.getElementById('settings-modal');
+        const closeSettings = document.getElementById('close-settings');
+
+        settingsBtn.addEventListener('click', () => settingsModal.classList.add('active'));
+        closeSettings.addEventListener('click', () => settingsModal.classList.remove('active'));
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) settingsModal.classList.remove('active');
+        });
+
+        // --- 6. Stealth Cloak (about:blank) Logic ---
+        const stealthBtn = document.getElementById('btn-stealth');
+        stealthBtn.addEventListener('click', () => {
+            if (stealthBtn.disabled) return;
+
+            const PROXY_URL = window.location.href; 
+            let win = window.open('about:blank', '_blank');
+            
+            if (!win || win.closed || typeof win.closed === 'undefined') {
+                alert("Popup blocker prevented the launch! Please allow popups for this site.");
+                return;
+            }
+
+            let doc = win.document;
+            doc.open();
+            doc.write(`
+                <!DOCTYPE html>
+                <html>
+                    <head>
+                        <title>Google Drive</title> 
+                        <link rel="icon" href="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png"> 
+                        <style>
+                            body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #121212; }
+                            iframe { border: none; width: 100%; height: 100%; }
+                        </style>
+                    </head>
+                    <body>
+                        <iframe src="${PROXY_URL}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"></iframe>
+                    </body>
+                </html>
+            `);
+            doc.close();
+            window.location.replace("https://google.com");
+        });
+
+        // --- 7. Settings: Ad-Blocker Toggle (Updated to V3) ---
+        const adblockToggle = document.getElementById('toggle-adblock');
+
+        // Load Saved State from V3 Database
+        const dbReq = indexedDB.open('ProxyStorageV3', 1);
+        dbReq.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies');
+            if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+        };
+        dbReq.onsuccess = (e) => {
+            const db = e.target.result;
+            const tx = db.transaction('settings', 'readonly');
+            const req = tx.objectStore('settings').get('adblock');
+            req.onsuccess = () => {
+                if (req.result !== undefined) {
+                    adblockToggle.checked = req.result;
+                }
+            };
+        };
+
+        // Handle User Toggling
+        adblockToggle.addEventListener('change', (e) => {
+            const isEnabled = e.target.checked;
+            
+            const dbReq2 = indexedDB.open('ProxyStorageV3', 1);
+            dbReq2.onsuccess = (ev) => {
+                const db = ev.target.result;
+                const tx = db.transaction('settings', 'readwrite');
+                tx.objectStore('settings').put(isEnabled, 'adblock');
+            };
+
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'update-setting',
+                    key: 'adblock',
+                    value: isEnabled
+                });
+            }
+        });
+    </script>
+</body>
+</html>
