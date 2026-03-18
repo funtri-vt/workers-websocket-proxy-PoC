@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V2 Proxy Engine (Dark Mode)</title>
+    <title>V3 Proxy Engine</title>
     <style>
         :root {
             --bg-dark: #121212;
@@ -104,7 +104,13 @@
             flex-grow: 1; 
             border: none; 
             width: 100%; 
-            background: #fff; /* White background for the target sites by default */
+            background: var(--bg-dark); /* Full dark mode for initial page */
+            transition: background 0.3s ease;
+        }
+
+        /* Dynamically applied once a site loads to prevent unreadable transparent sites */
+        #frame.site-loaded {
+            background: #fff; 
         }
 
         /* --- Settings Button --- */
@@ -123,7 +129,7 @@
 
         /* --- Modal Overlay --- */
         .modal-overlay {
-            display: none; /* Hidden by default */
+            display: none;
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0, 0, 0, 0.7);
@@ -134,7 +140,7 @@
         }
         
         .modal-overlay.active {
-            display: flex; /* Shows the modal */
+            display: flex;
         }
         
         .modal-content {
@@ -185,6 +191,7 @@
         .setting-row:last-child {
             border-bottom: none;
         }
+
         /* --- Navigation Buttons --- */
         .btn-nav {
             background: #45475a;
@@ -201,16 +208,17 @@
             color: #11111b;
             transform: translateY(-1px);
         }
+
         /* --- Loading Spinner --- */
         #loader {
-            display: none; /* Hidden by default */
+            display: none;
             width: 18px;
             height: 18px;
             border: 3px solid #45475a;
             border-top: 3px solid var(--accent);
             border-radius: 50%;
             animation: spin 1s linear infinite;
-            margin: 0 8px; /* Spacing between the buttons and the input bar */
+            margin: 0 8px;
         }
 
         @keyframes spin {
@@ -220,63 +228,22 @@
 
         /* --- Mobile Responsiveness --- */
         @media (max-width: 650px) {
-            #top-bar {
-                padding: 10px;
-                gap: 8px;
-            }
-
-            /* Row 1: Brand, Status, and Clear Button */
-            .brand { 
-                order: 1; 
-                font-size: 16px; 
-            }
-            
-            #loader { 
-                order: 3; 
-            }
-
-            #status-indicator { 
-                order: 3; 
-                margin-left: auto; /* Pushes the clear button to the right */
-            }
-            
-            .btn-clear { 
-                order: 5; 
-                padding: 8px 12px; 
-                font-size: 12px; 
-            }
-
-            .btn-settings { 
-                order: 4; 
-                padding: 8px 12px; 
-                font-size: 12px; 
-            }
-            
-            .btn-nav { 
-                order: 2; 
-                padding: 8px 12px; 
-                font-size: 12px; 
-            }
-
-            /* Row 2: Full-width URL Input and Launch Button */
-            #url-input { 
-                order: 6; 
-                flex: 1 1 100%; /* Forces input to take up the whole new row */
-                margin-top: 4px;
-            }
-            
-            .btn-go { 
-                order: 7; 
-                flex: 1 1 100%; /* Forces button to its own full-width row for easy tapping */
-                padding: 12px;
-            }
+            #top-bar { padding: 10px; gap: 8px; }
+            .brand { order: 1; font-size: 16px; }
+            #loader { order: 3; }
+            #status-indicator { order: 3; margin-left: auto; }
+            .btn-clear { order: 5; padding: 8px 12px; font-size: 12px; }
+            .btn-settings { order: 4; padding: 8px 12px; font-size: 12px; }
+            .btn-nav { order: 2; padding: 8px 12px; font-size: 12px; }
+            #url-input { order: 6; flex: 1 1 100%; margin-top: 4px; }
+            .btn-go { order: 7; flex: 1 1 100%; padding: 12px; }
         }
     </style>
 </head>
 <body>
   
     <div id="top-bar">
-        <div class="brand">V2 ENGINE</div>
+        <div class="brand">V3 ENGINE</div>
 
         <button class="btn-nav" id="back-btn" title="Go Back">◀</button>
         <button class="btn-nav" id="fwd-btn" title="Go Forward">▶</button>
@@ -325,22 +292,16 @@
 
         // --- History Navigation ---
         backBtn.addEventListener('click', () => {
-            try {
-                frame.contentWindow.history.back();
-            } catch (e) {
-                console.warn('[Host] Could not navigate back:', e);
-            }
+            try { frame.contentWindow.history.back(); } 
+            catch (e) { console.warn('[Host] Could not navigate back:', e); }
         });
 
         fwdBtn.addEventListener('click', () => {
-            try {
-                frame.contentWindow.history.forward();
-            } catch (e) {
-                console.warn('[Host] Could not navigate forward:', e);
-            }
+            try { frame.contentWindow.history.forward(); } 
+            catch (e) { console.warn('[Host] Could not navigate forward:', e); }
         });
 
-        // --- 1. Register the V2 Service Worker & Listen for Logs ---
+        // --- 1. Register the V3 Service Worker ---
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
                 .then(registration => { 
@@ -352,7 +313,6 @@
                     console.error('SW Failed:', err);
                 });
 
-            // Catch messages from the Service Worker and log them
             navigator.serviceWorker.addEventListener('message', event => {
                 if (event.data && event.data.type === 'sw-log') {
                     console.log(`%c[SW Broadcast]`, 'color: #a6e3a1; font-weight: bold;', event.data.message);
@@ -365,7 +325,6 @@
             let targetUrl = input.value.trim();
             if (!targetUrl) return;
             
-            // Smart Omnibox (Search vs URL)
             if (targetUrl.includes(' ') || !targetUrl.includes('.')) {
                 targetUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(targetUrl);
                 console.log(`[Host] 🔍 Search detected. Routing to DuckDuckGo...`);
@@ -375,12 +334,12 @@
 
             console.log(`[Host] 🚀 Loading into iframe: ${targetUrl}`);
             
-            // Show the loading spinner
             loader.style.display = 'block';
+            frame.classList.add('site-loaded'); // Swap to white background for website compatibility
 
-            // Launch the V2 tunnel inside the iframe
+            // Launch the V3 tunnel
             frame.src = '/service/' + encodeURIComponent(targetUrl);
-            input.blur(); // Remove focus from the input box after pressing enter
+            input.blur(); 
         }
 
         goBtn.addEventListener('click', loadUrl);
@@ -388,74 +347,57 @@
             if (e.key === 'Enter') loadUrl();
         });
 
-        // --- Omnibox URL Sync ---
         function syncUrlBar() {
             try {
-                // We can read this because the iframe is on our same origin!
                 const currentHref = frame.contentWindow.location.href;
-                
                 if (!currentHref || currentHref === 'about:blank') return;
 
                 const marker = '/service/';
                 const markerIndex = currentHref.indexOf(marker);
                 
                 if (markerIndex !== -1) {
-                    // Extract and decode the real target URL
                     const rawTarget = currentHref.substring(markerIndex + marker.length);
                     const decodedTarget = decodeURIComponent(rawTarget);
                     
-                    // Only update the input if the user ISN'T actively typing in it
                     if (document.activeElement !== input && input.value !== decodedTarget) {
                         input.value = decodedTarget;
                     }
                 }
-            } catch (e) {
-                // Silently ignore cross-origin errors (shouldn't happen with SW, but safe to catch)
-            }
+            } catch (e) {}
         }
 
-        // Sync when the iframe fully loads a new page, and hide the loader
         frame.addEventListener('load', () => {
             loader.style.display = 'none';
             syncUrlBar();
         });
         
-        
-        // Sync every 500ms to catch hidden Single Page Application (SPA) navigations
         setInterval(syncUrlBar, 500);
 
         // --- 3. Eruda DevTools Auto-Injector ---
         (function () {
             var script = document.createElement('script');
-            // FIX: Point directly to the file to prevent SW 302 redirect failures
             script.src = 'https://cdn.jsdelivr.net/npm/eruda/eruda.min.js';
             script.onload = function () { 
-                eruda.init({
-                    defaults: { theme: 'Dark' }
-                }); 
+                eruda.init({ defaults: { theme: 'Dark' } }); 
                 console.log('[Host] Eruda DevTools injected & ready.');
             };
             document.head.appendChild(script);
         })();
 
+        // --- 4. Cache & Storage Cleanup (Updated to V3) ---
         const clearBtn = document.getElementById('clear-btn');
-
-        // --- 4. Cache & Storage Cleanup ---
         clearBtn.addEventListener('click', async () => {
             const originalStatus = statusEl.textContent;
             const originalColor = statusEl.style.color;
             
             try {
-                // 1. Delete the static asset cache
-                const cacheDeleted = await caches.delete('v2-engine-cache');
-                
-                // 2. Delete the persistent cookies database
-                const idbRequest = indexedDB.deleteDatabase('ProxyStorage');
+                // Delete the V3 cache and V3 database
+                await caches.delete('v3-engine-cache');
+                const idbRequest = indexedDB.deleteDatabase('ProxyStorageV3');
                 
                 idbRequest.onsuccess = () => {
-                    console.log('[Host] 🧹 V2 Engine Cache & Storage cleared successfully.');
+                    console.log('[Host] 🧹 V3 Engine Cache & Storage cleared successfully.');
                     
-                    // Flash the status indicator
                     statusEl.textContent = 'Cleared!';
                     statusEl.style.color = 'var(--success)';
                     
@@ -469,8 +411,8 @@
                     console.error('[Host] ⚠️ Failed to delete Cookie DB.');
                 };
                 
-                // Optional: Force a reload of the iframe to clear memory
                 frame.src = 'about:blank';
+                frame.classList.remove('site-loaded'); // Revert to pure dark mode
                 
             } catch (err) {
                 console.error('[Host] Error clearing cache:', err);
@@ -478,46 +420,31 @@
                 statusEl.style.color = 'var(--danger)';
             }
         });
+
         // --- 5. Settings Modal Logic ---
         const settingsBtn = document.getElementById('settings-btn');
         const settingsModal = document.getElementById('settings-modal');
         const closeSettings = document.getElementById('close-settings');
 
-        // Open Modal
-        settingsBtn.addEventListener('click', () => {
-            settingsModal.classList.add('active');
-        });
-
-        // Close Modal via Button
-        closeSettings.addEventListener('click', () => {
-            settingsModal.classList.remove('active');
-        });
-
-        // Close Modal by clicking outside the box
+        settingsBtn.addEventListener('click', () => settingsModal.classList.add('active'));
+        closeSettings.addEventListener('click', () => settingsModal.classList.remove('active'));
         settingsModal.addEventListener('click', (e) => {
-            if (e.target === settingsModal) {
-                settingsModal.classList.remove('active');
-            }
+            if (e.target === settingsModal) settingsModal.classList.remove('active');
         });
+
         // --- 6. Stealth Cloak (about:blank) Logic ---
         const stealthBtn = document.getElementById('btn-stealth');
-
         stealthBtn.addEventListener('click', () => {
             if (stealthBtn.disabled) return;
 
-            // Agnostic URL: dynamically grab wherever the engine is currently hosted
             const PROXY_URL = window.location.href; 
-            
-            // 1. Open the blank window
             let win = window.open('about:blank', '_blank');
             
-            // 2. Alert if popups are blocked
             if (!win || win.closed || typeof win.closed === 'undefined') {
                 alert("Popup blocker prevented the launch! Please allow popups for this site.");
                 return;
             }
 
-            // 3. Inject the disguised iframe into the blank document
             let doc = win.document;
             doc.open();
             doc.write(`
@@ -537,16 +464,14 @@
                 </html>
             `);
             doc.close();
-
-            // 4. Redirect the original, exposed tab
             window.location.replace("https://google.com");
         });
 
-        // --- 7. Settings: Ad-Blocker Toggle ---
+        // --- 7. Settings: Ad-Blocker Toggle (Updated to V3) ---
         const adblockToggle = document.getElementById('toggle-adblock');
 
-        // 1. Initialize Database and Load Saved State
-        const dbReq = indexedDB.open('ProxyStorage', 2);
+        // Load Saved State from V3 Database
+        const dbReq = indexedDB.open('ProxyStorageV3', 1);
         dbReq.onupgradeneeded = (e) => {
             const db = e.target.result;
             if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies');
@@ -563,19 +488,17 @@
             };
         };
 
-        // 2. Handle User Toggling
+        // Handle User Toggling
         adblockToggle.addEventListener('change', (e) => {
             const isEnabled = e.target.checked;
             
-            // Write to IndexedDB permanently
-            const dbReq2 = indexedDB.open('ProxyStorage', 2);
+            const dbReq2 = indexedDB.open('ProxyStorageV3', 1);
             dbReq2.onsuccess = (ev) => {
                 const db = ev.target.result;
                 const tx = db.transaction('settings', 'readwrite');
                 tx.objectStore('settings').put(isEnabled, 'adblock');
             };
 
-            // Send instant message to update SW memory
             if (navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage({
                     type: 'update-setting',

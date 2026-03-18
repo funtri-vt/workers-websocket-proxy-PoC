@@ -7,7 +7,7 @@ import indexHtml from "./index.html";
 import swJs from "./sw.js";
 
 // =========================================================
-// 1. HTML Rewriter Classes
+// 1. V3 HTML Rewriter Classes
 // =========================================================
 
 class AttributeRewriter {
@@ -20,6 +20,7 @@ class AttributeRewriter {
 		if (attribute && !attribute.startsWith('data:') && !attribute.startsWith('#')) {
 			try {
 				const absoluteUrl = new URL(attribute, this.baseUrl).toString();
+				// Prevent IP leaks by keeping the prefix here for initial HTML load
 				element.setAttribute(this.attributeName, "/service/" + encodeURIComponent(absoluteUrl));
 			} catch (e) {}
 		}
@@ -68,12 +69,11 @@ class ScriptInjector {
 		const script = `
 		<script src="https://cdn.jsdelivr.net/npm/eruda/eruda.min.js"></script>
 		<script>
-			// FIX: Wait for Eruda to download before initializing, preventing ReferenceErrors
 			let eTimer = setInterval(() => {
 				if (window.eruda) {
 					clearInterval(eTimer);
 					eruda.init(); 
-					console.log("[V2 Proxy] Eruda Initialized for: ${this.baseUrl}");
+					console.log("[V3 Proxy] Eruda & Foundation Initialized for: ${this.baseUrl}");
 				}
 			}, 50);
 
@@ -82,7 +82,6 @@ class ScriptInjector {
 				const prefix = config.targetDomain + ":";
 				const PROXY_BASE = window.location.origin + '/service/';
 				const TARGET_BASE = config.targetBase;
-				const TARGET_ORIGIN = config.targetOrigin;
 
 				function resolveUrl(url) {
 					if (!url || typeof url !== 'string') return url;
@@ -90,15 +89,12 @@ class ScriptInjector {
 					if (url.startsWith('/service/')) return url;
 					
 					// 🩹 CLIENT-SIDE GLUED URL RESCUE
-					// If Wikipedia's JS accidentally prepended its own domain to our proxy path
 					const marker = '/service/';
 					const idx = url.indexOf(marker);
 					if (idx !== -1) {
 						try {
 							const extracted = decodeURIComponent(url.substring(idx + marker.length));
-							if (extracted.startsWith('http')) {
-								return PROXY_BASE + encodeURIComponent(extracted);
-							}
+							if (extracted.startsWith('http')) return PROXY_BASE + encodeURIComponent(extracted);
 						} catch(e) {}
 					}
 					
@@ -130,15 +126,12 @@ class ScriptInjector {
 
 				try { Object.defineProperty(window, 'localStorage', { value: makeProxy(window.localStorage) }); } catch(e) {}
 				try { Object.defineProperty(window, 'sessionStorage', { value: makeProxy(window.sessionStorage) }); } catch(e) {}
-
 				try { Object.defineProperty(window, 'top', { value: window.self }); } catch(e) {}
 				try { Object.defineProperty(window, 'parent', { value: window.self }); } catch(e) {}
 
 				const orgSetAttribute = Element.prototype.setAttribute;
 				Element.prototype.setAttribute = function(name, value) {
-					if (['src', 'href', 'action'].includes(name.toLowerCase())) {
-						value = resolveUrl(value);
-					}
+					if (['src', 'href', 'action'].includes(name.toLowerCase())) value = resolveUrl(value);
 					return orgSetAttribute.apply(this, [name, value]);
 				};
 
@@ -151,12 +144,11 @@ class ScriptInjector {
 						});
 					}
 				};
+				
 				if (window.HTMLImageElement) hookProp(HTMLImageElement.prototype, 'src');
 				if (window.HTMLAnchorElement) hookProp(HTMLAnchorElement.prototype, 'href');
 				if (window.HTMLFormElement) hookProp(HTMLFormElement.prototype, 'action');
 				if (window.HTMLScriptElement) hookProp(HTMLScriptElement.prototype, 'src');
-				
-				// CRITICAL FIX: Catches Webpack/Vite dynamic CSS and Iframe chunks
 				if (window.HTMLLinkElement) hookProp(HTMLLinkElement.prototype, 'href');
 				if (window.HTMLIFrameElement) hookProp(HTMLIFrameElement.prototype, 'src');
 				if (window.HTMLSourceElement) hookProp(HTMLSourceElement.prototype, 'src');
@@ -164,9 +156,7 @@ class ScriptInjector {
 				const oldFetch = window.fetch;
 				window.fetch = function(input, init) {
 					if (typeof input === 'string') input = resolveUrl(input);
-					else if (input instanceof Request) {
-						return oldFetch(new Request(resolveUrl(input.url), input), init);
-					}
+					else if (input instanceof Request) return oldFetch(new Request(resolveUrl(input.url), input), init);
 					return oldFetch(input, init);
 				};
 
@@ -182,13 +172,9 @@ class ScriptInjector {
 
 				const OriginalWebSocket = window.WebSocket;
 				window.WebSocket = function(url, protocols) {
-					if (typeof url === 'string' && url.includes('/ws/')) {
-						return new OriginalWebSocket(url, protocols);
-					}
-					const absoluteTarget = new URL(url, TARGET_BASE).toString();
-					const targetUrl = encodeURIComponent(absoluteTarget);
+					if (typeof url === 'string' && url.includes('/ws/')) return new OriginalWebSocket(url, protocols);
+					const targetUrl = encodeURIComponent(new URL(url, TARGET_BASE).toString());
 					const proxyUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/proxy-ws/?target=' + targetUrl;
-
 					return protocols ? new OriginalWebSocket(proxyUrl, protocols) : new OriginalWebSocket(proxyUrl);
 				};
 				window.WebSocket.prototype = OriginalWebSocket.prototype;
@@ -220,24 +206,16 @@ export default {
 		const url = new URL(request.url);
 
 		if (url.pathname === "/sw.js") {
-			return new Response(swJs, {
-				headers: { "content-type": "application/javascript", "cache-control": "no-store" },
-			});
+			return new Response(swJs, { headers: { "content-type": "application/javascript", "cache-control": "no-store" } });
 		}
 
 		if (url.pathname === "/" || url.pathname === "/index.html") {
-			return new Response(indexHtml, {
-				headers: { 
-					"content-type": "text/html",
-					"cache-control": "no-store, no-cache, must-revalidate",
-				},
-			});
+			return new Response(indexHtml, { headers: { "content-type": "text/html", "cache-control": "no-store, no-cache, must-revalidate" } });
 		}
 
+		// --- V3 Core Proxy WebSocket ---
 		if (url.pathname === "/ws/") {
-			if (request.headers.get("Upgrade") !== "websocket") {
-				return new Response("Expected WebSocket", { status: 426 });
-			}
+			if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected WebSocket", { status: 426 });
 
 			const { 0: client, 1: server } = new WebSocketPair();
 			server.accept();
@@ -248,24 +226,22 @@ export default {
 				}
 			};
 
-			// 🛡️ THE PAYLOAD SLICER (Now with Backpressure Handling)
+			// 🛡️ V3 ARCHITECTURE: Async Slicer with Backpressure Yielding
 			const sendChunked = async (data) => {
 				if (server.readyState !== 1) return;
-				const CHUNK_SIZE = 32 * 1024; // Dropped to 32KB to be extra safe
+				const CHUNK_SIZE = 32 * 1024; 
 				
 				if (data.byteLength > CHUNK_SIZE) {
 					for (let i = 0; i < data.byteLength; i += CHUNK_SIZE) {
 						if (server.readyState !== 1) break;
 						try {
-							server.send(data.subarray(i, i + CHUNK_SIZE)); 
-							// 🚦 THE FIX: Yield to the event loop so Cloudflare's buffer can drain
-							await new Promise(resolve => setTimeout(resolve, 2));
+							server.send(data.subarray(i, i + CHUNK_SIZE)); 
+							await new Promise(resolve => setTimeout(resolve, 2)); // CF Buffer Drain
 						} catch(e) {}
 					}
 				} else {
 					try { 
 						server.send(data); 
-						// Tiny yield for normal chunks if they stream in really fast
 						await new Promise(resolve => setTimeout(resolve, 1));
 					} catch(e) {}
 				}
@@ -281,14 +257,12 @@ export default {
 						const targetUrl = msg.url;
 						const targetUrlObj = new URL(targetUrl);
 						
-						safeSend(JSON.stringify({ type: "info", message: `V2 Fetching: ${targetUrl}` }));
+						safeSend(JSON.stringify({ type: "info", message: `V3 Fetching: ${targetUrl}` }));
 
 						const proxyHeaders = new Headers(msg.headers);
-											
 						proxyHeaders.delete("accept-encoding"); 
 						proxyHeaders.delete("if-none-match");
 						proxyHeaders.delete("if-modified-since");
-											
 						proxyHeaders.set("Host", targetUrlObj.host);
 						proxyHeaders.set("Referer", targetUrlObj.origin + "/");
 						proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
@@ -299,25 +273,14 @@ export default {
 							proxyHeaders.delete("Origin");
 						}
 
-						const fetchOptions = {
-							method: msg.method,
-							headers: proxyHeaders,
-							redirect: "manual"
-						};
-
-						if (msg.body) {
-							fetchOptions.body = Buffer.from(msg.body, "base64");
-						}
+						const fetchOptions = { method: msg.method, headers: proxyHeaders, redirect: "manual" };
+						if (msg.body) fetchOptions.body = Buffer.from(msg.body, "base64");
 
 						if (msg.method.toUpperCase() === "OPTIONS") {
 							safeSend(JSON.stringify({
 								type: "response",
 								status: 200,
-								headers: {
-									"Access-Control-Allow-Origin": "*",
-									"Access-Control-Allow-Methods": "*",
-									"Access-Control-Allow-Headers": "*"
-								},
+								headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "*", "Access-Control-Allow-Headers": "*" },
 								setCookies: [],
 								targetDomain: targetUrlObj.hostname
 							}));
@@ -326,7 +289,6 @@ export default {
 						}
 
 						const res = await fetch(new Request(targetUrl, fetchOptions));
-
 						const headersOut = {};
 						let contentType = "";
 						const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
@@ -335,22 +297,19 @@ export default {
 							const lowerKey = key.toLowerCase();
 							if (lowerKey === "content-type") contentType = value;
 							
+							// 🛑 V3 FIX: The Double-Proxy Location Trap solved
 							if (lowerKey === "location") {
 								try {
-        							// Just resolve the absolute path. The Service Worker will wrap it!
-        							headersOut[key] = new URL(value, targetUrl).toString();
-    							} catch (e) {
-        							headersOut[key] = value;
-    							}
+									headersOut[key] = new URL(value, targetUrl).toString();
+								} catch (e) {
+									headersOut[key] = value;
+								}
 							} else if (!["content-encoding", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie", "access-control-allow-origin"].includes(lowerKey)) {
 								headersOut[key] = value;
 							}
 						});
 
-						if (contentType.includes("text/html")) {
-							delete headersOut["content-length"];
-						}
-						
+						if (contentType.includes("text/html")) delete headersOut["content-length"];
 						headersOut["Access-Control-Allow-Origin"] = "*";
 						headersOut["Access-Control-Allow-Methods"] = "*";
 						headersOut["Access-Control-Allow-Headers"] = "*";
@@ -363,7 +322,7 @@ export default {
 							targetDomain: targetUrlObj.hostname
 						}));
 
-						// --- 4. Stream & Rewrite the Body (With Safe Chunking) ---
+						// --- Stream & Rewrite the Body ---
 						if (contentType.includes("text/html")) {
 							const rewriter = new HTMLRewriter()
 								.on("head", new ScriptInjector(targetUrl))
@@ -372,7 +331,6 @@ export default {
 								.on("link", new AttributeRewriter("href", targetUrl))
 								.on("form", new AttributeRewriter("action", targetUrl))
 								.on("script", new AttributeRewriter("src", targetUrl))
-								// ADDED: Catch iframe and source tags
 								.on("iframe", new AttributeRewriter("src", targetUrl))
 								.on("source", new AttributeRewriter("src", targetUrl)) 
 								.on("img, source", new SrcsetRewriter(targetUrl))
@@ -387,7 +345,7 @@ export default {
 										if (server.readyState !== 1) break;
 										const { done, value } = await reader.read();
 										if (done) break;
-										await sendChunked(value); // Safe Slicer
+										await sendChunked(value);
 									}
 								} finally {
 									reader.releaseLock();
@@ -400,27 +358,24 @@ export default {
 									if (server.readyState !== 1) break;
 									const { done, value } = await reader.read();
 									if (done) break;
-									await sendChunked(value); // Safe Slicer
+									await sendChunked(value);
 								}
 							} finally {
 								reader.releaseLock();
 							}
 						}
-
 						safeSend(JSON.stringify({ type: "end" }));
 					}
 				} catch (e) {
-					safeSend(JSON.stringify({ type: "error", message: `V2 Fetch Error: ${e.message}` }));
+					safeSend(JSON.stringify({ type: "error", message: `V3 Fetch Error: ${e.message}` }));
 					safeSend(JSON.stringify({ type: "end" }));
 				}
 			});
 
-			return new Response(null, {
-				status: 101,
-				webSocket: client,
-			});
+			return new Response(null, { status: 101, webSocket: client });
 		}
 
+		// --- Target WebSocket Proxy (For Eaglercraft, Chat Apps, etc.) ---
 		if (url.pathname.startsWith("/proxy-ws/")) {
 			const targetUrlParam = url.searchParams.get("target");
 			if (!targetUrlParam) return new Response("Missing Target", { status: 400 });
@@ -432,10 +387,7 @@ export default {
 			const proxyHeaders = new Headers();
 			
 			proxyHeaders.set("Upgrade", "websocket");
-			if (requestedProtocols) {
-				proxyHeaders.set("Sec-WebSocket-Protocol", requestedProtocols);
-			}
-			
+			if (requestedProtocols) proxyHeaders.set("Sec-WebSocket-Protocol", requestedProtocols);
 			try { proxyHeaders.set("Origin", new URL(targetUrl).origin); } catch(e) {}
 			proxyHeaders.set("User-Agent", request.headers.get("User-Agent") || "Mozilla/5.0");
 
@@ -462,7 +414,6 @@ export default {
 			serverSocket.addEventListener("message", event => {
 				try { targetSocket.send(event.data); } catch (e) {}
 			});
-			
 			targetSocket.addEventListener("message", event => {
 				try { serverSocket.send(event.data); } catch (e) {}
 			});
@@ -479,17 +430,11 @@ export default {
 
 			const responseHeaders = new Headers();
 			const acceptedProtocol = targetResponse.headers.get("Sec-WebSocket-Protocol");
-			if (acceptedProtocol) {
-				responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
-			}
+			if (acceptedProtocol) responseHeaders.set("Sec-WebSocket-Protocol", acceptedProtocol);
 
-			return new Response(null, {
-				status: 101,
-				webSocket: clientSocket,
-				headers: responseHeaders
-			});
+			return new Response(null, { status: 101, webSocket: clientSocket, headers: responseHeaders });
 		}
 
-		return new Response("V2: 404 Not Found", { status: 404 });
+		return new Response("V3: 404 Not Found", { status: 404 });
 	},
 };
