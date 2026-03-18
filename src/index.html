@@ -1,303 +1,589 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>SW Proxy Engine</title>
-  
-  <meta http-equiv="Content-Security-Policy" content="
-  default-src 'self'; 
-  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; 
-  style-src 'self' 'unsafe-inline'; 
-  img-src 'self' data: blob:;
-  font-src 'self' data:;
-  connect-src 'self' ws: wss: https: blob:;
-  frame-src 'self' data:;
-  ">
-  
-  <style>
-    :root {
-      --bg-dark: #1e1e2e;
-      --bg-input: #313244;
-      --text-light: #cdd6f4;
-      --accent: #89b4fa;
-      --accent-hover: #74c7ec;
-    }
-    
-    body { 
-      margin: 0; 
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-      display: flex; 
-      flex-direction: column; 
-      height: 100vh; 
-      background-color: #000; 
-      overflow: hidden; 
-    }
-    
-    #bar { 
-      padding: 12px 20px; 
-      background: var(--bg-dark); 
-      display: flex; 
-      gap: 15px; 
-      align-items: center; 
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
-      z-index: 10; 
-    }
-    
-    .brand { 
-      font-weight: 800; 
-      letter-spacing: 1px; 
-      color: var(--accent); 
-      font-size: 18px;
-    }
-    
-    #url-input { 
-      flex-grow: 1; 
-      padding: 10px 16px; 
-      font-size: 15px; 
-      border-radius: 8px; 
-      border: 1px solid #45475a; 
-      background: var(--bg-input); 
-      color: var(--text-light); 
-      outline: none; 
-      transition: border 0.2s; 
-    }
-    
-    #url-input:focus { 
-      border-color: var(--accent); 
-    }
-    
-    button { 
-      padding: 10px 20px; 
-      font-size: 14px; 
-      font-weight: 600; 
-      cursor: pointer; 
-      border-radius: 8px; 
-      border: none; 
-      transition: all 0.2s ease; 
-    }
-    
-    .btn-go { 
-      background: var(--accent); 
-      color: #11111b; 
-    }
-    
-    .btn-go:hover { 
-      background: var(--accent-hover); 
-      transform: translateY(-1px); 
-    }
-    
-    .btn-logs { 
-      background: transparent; 
-      border: 1px solid #585b70; 
-      color: #bac2de; 
-      padding: 8px 12px; 
-      font-size: 12px;
-    }
-    
-    .btn-logs:hover { 
-      background: #585b70; 
-      color: #fff; 
-    }
-    
-    #frame { 
-      flex-grow: 1; 
-      border: none; 
-      width: 100%; 
-      background: #fff; 
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V2 Proxy Engine (Dark Mode)</title>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --bg-panel: #1e1e2e;
+            --bg-input: #313244;
+            --text-light: #cdd6f4;
+            --accent: #89b4fa;
+            --accent-hover: #74c7ec;
+            --danger: #f38ba8;
+            --success: #a6e3a1;
+        }
+        
+        body { 
+            margin: 0; 
+            font-family: system-ui, -apple-system, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            background-color: var(--bg-dark); 
+            color: var(--text-light);
+            overflow: hidden; 
+        }
+        
+        #top-bar { 
+            padding: 12px 20px; 
+            background: var(--bg-panel); 
+            display: flex; 
+            gap: 12px; 
+            align-items: center; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
+            z-index: 10; 
+            flex-wrap: wrap; 
+        }
+        
+        .brand { 
+            font-weight: 800; 
+            letter-spacing: 1px; 
+            color: var(--accent); 
+            font-size: 18px;
+            white-space: nowrap;
+        }
+        
+        #url-input { 
+            flex-grow: 1; 
+            padding: 10px 16px; 
+            font-size: 15px; 
+            border-radius: 8px; 
+            border: 1px solid #45475a; 
+            background: var(--bg-input); 
+            color: var(--text-light); 
+            outline: none; 
+            transition: border 0.2s; 
+        }
+        
+        #url-input:focus { 
+            border-color: var(--accent); 
+        }
+        
+        button { 
+            padding: 10px 20px; 
+            font-size: 14px; 
+            font-weight: 600; 
+            cursor: pointer; 
+            border-radius: 8px; 
+            border: none; 
+            transition: all 0.2s ease; 
+        }
+        
+        .btn-go { 
+            background: var(--accent); 
+            color: #11111b; 
+        }
+        
+        .btn-go:hover { 
+            background: var(--accent-hover); 
+            transform: translateY(-1px); 
+        }
+        
+        .btn-clear {
+            background: #45475a;
+            color: var(--text-light);
+        }
+        
+        .btn-clear:hover {
+            background: var(--danger);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+
+        #status-indicator {
+            font-size: 12px;
+            font-weight: bold;
+            color: var(--danger);
+            white-space: nowrap;
+        }
+        
+        #frame { 
+            flex-grow: 1; 
+            border: none; 
+            width: 100%; 
+            background: #fff; /* White background for the target sites by default */
+        }
+
+        /* --- Settings Button --- */
+        .btn-settings {
+            background: #45475a;
+            color: var(--text-light);
+            padding: 10px 14px;
+            font-size: 16px;
+        }
+        
+        .btn-settings:hover {
+            background: var(--accent);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+
+        /* --- Modal Overlay --- */
+        .modal-overlay {
+            display: none; /* Hidden by default */
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(4px);
+        }
+        
+        .modal-overlay.active {
+            display: flex; /* Shows the modal */
+        }
+        
+        .modal-content {
+            background: var(--bg-panel);
+            padding: 24px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border: 1px solid #45475a;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h2 {
+            margin: 0;
+            font-size: 20px;
+            color: var(--accent);
+        }
+        
+        .close-btn {
+            background: transparent;
+            color: var(--text-light);
+            font-size: 24px;
+            padding: 0 8px;
+            border-radius: 4px;
+        }
+        
+        .close-btn:hover {
+            background: var(--danger);
+            color: #11111b;
+        }
+
+        /* --- Settings Rows --- */
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #313244;
+        }
+        
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+        /* --- Navigation Buttons --- */
+        .btn-nav {
+            background: #45475a;
+            color: var(--text-light);
+            padding: 10px 14px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-nav:hover {
+            background: var(--accent);
+            color: #11111b;
+            transform: translateY(-1px);
+        }
+        /* --- Loading Spinner --- */
+        #loader {
+            display: none; /* Hidden by default */
+            width: 18px;
+            height: 18px;
+            border: 3px solid #45475a;
+            border-top: 3px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 8px; /* Spacing between the buttons and the input bar */
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* --- Mobile Responsiveness --- */
+        @media (max-width: 650px) {
+            #top-bar {
+                padding: 10px;
+                gap: 8px;
+            }
+
+            /* Row 1: Brand, Status, and Clear Button */
+            .brand { 
+                order: 1; 
+                font-size: 16px; 
+            }
+            
+            #loader { 
+                order: 3; 
+            }
+
+            #status-indicator { 
+                order: 3; 
+                margin-left: auto; /* Pushes the clear button to the right */
+            }
+            
+            .btn-clear { 
+                order: 5; 
+                padding: 8px 12px; 
+                font-size: 12px; 
+            }
+
+            .btn-settings { 
+                order: 4; 
+                padding: 8px 12px; 
+                font-size: 12px; 
+            }
+            
+            .btn-nav { 
+                order: 2; 
+                padding: 8px 12px; 
+                font-size: 12px; 
+            }
+
+            /* Row 2: Full-width URL Input and Launch Button */
+            #url-input { 
+                order: 6; 
+                flex: 1 1 100%; /* Forces input to take up the whole new row */
+                margin-top: 4px;
+            }
+            
+            .btn-go { 
+                order: 7; 
+                flex: 1 1 100%; /* Forces button to its own full-width row for easy tapping */
+                padding: 12px;
+            }
+        }
+    </style>
 </head>
 <body>
   
-  <div id="bar">
-    <div class="brand">PROXY.JS</div>
-    <input type="text" id="url-input" placeholder="Enter a URL (e.g., wikipedia.org)" value="wikipedia.org" autocomplete="off" spellcheck="false" />
-    <button class="btn-go" onclick="loadUrl()">Go</button>
-    <button class="btn-logs" id="downloadLogsBtn">💾 Get Logs</button>
-  </div>
+    <div id="top-bar">
+        <div class="brand">V2 ENGINE</div>
+
+        <button class="btn-nav" id="back-btn" title="Go Back">◀</button>
+        <button class="btn-nav" id="fwd-btn" title="Go Forward">▶</button>
+
+        <div id="loader"></div>
+
+        <input type="text" id="url-input" placeholder="Enter a URL (e.g., duckduckgo.com)" autocomplete="off" spellcheck="false" />
+        <button class="btn-go" id="go-btn">Launch</button>
+        <button class="btn-settings" id="settings-btn" title="Settings">⚙️</button>
+        <button class="btn-clear" id="clear-btn">Clear Cache</button>
+        <div id="status-indicator">SW: Offline</div>
+    </div>
   
-  <iframe style="background-color: #121212; color-scheme: dark;"
-  srcdoc="<html style='background-color: #121212; color-scheme: dark;'></html>"
-  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-  allow="pointer-lock; keyboard-map; fullscreen"
-  tabindex="0"
-  id="frame"></iframe>
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Engine Settings</h2>
+                <button class="close-btn" id="close-settings">&times;</button>
+            </div>
+            
+            <div class="setting-row">
+                <span>Block Ads & Trackers</span>
+                <input type="checkbox" id="toggle-adblock" checked>
+            </div>
+            <div class="setting-row">
+                <span>Stealth Cloak (about:blank)</span>
+                <button id="btn-stealth" style="padding: 6px 12px; background: var(--accent); color: #11111b; font-size: 12px;">Launch</button>
+            </div>
+        </div>
+    </div>
 
-  <button id="settings-toggle" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; padding: 10px; cursor: pointer;">⚙️ Settings</button>
+    <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+            allow="pointer-lock; keyboard-map; fullscreen"
+            tabindex="0"
+            id="frame">
+    </iframe>
 
-  <div id="settings-panel" style="display: none; position: fixed; bottom: 60px; right: 20px; background: #222; color: #fff; padding: 20px; border-radius: 8px; font-family: sans-serif; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
-    <h3 style="margin-top: 0;">Proxy Settings</h3>
-  
-    <label style="display: block; margin-bottom: 10px;">
-      <input type="checkbox" id="setting-debug-logs" checked>
-      Enable Debug Logging
-    </label>
-  
-    <label style="display: block; margin-bottom: 10px;">
-      Backend URL:
-      <input type="text" id="setting-backend-url" style="width: 100%; margin-top: 5px; padding: 5px;">
-    </label>
+    <script>
+        const statusEl = document.getElementById('status-indicator');
+        const input = document.getElementById('url-input');
+        const goBtn = document.getElementById('go-btn');
+        const frame = document.getElementById('frame');
+        const loader = document.getElementById('loader');
+        const backBtn = document.getElementById('back-btn');
+        const fwdBtn = document.getElementById('fwd-btn');
 
-    <button id="settings-save" style="margin-top: 10px; padding: 5px 10px; cursor: pointer;">Save & Apply</button>
-    <button id="settings-reset" style="margin-top: 10px; margin-left: 10px; padding: 5px 10px; cursor: pointer; background: #666; color: #fff; border: 1px solid #444; border-radius: 3px;">Reset to Defaults</button>
-    
-  </div>
-
-  <script>
-    // --- 1. Logging Engine ---
-    window.appLogs = [];
-    function proxyLog(source, message) {
-      const timestamp = new Date().toISOString().split('T')[1].replace('Z', '');
-      const logEntry = `[${timestamp}] [${source}] ${message}`;
-      window.appLogs.push(logEntry);
-      console.log(logEntry); 
-    }
-
-    document.getElementById('downloadLogsBtn').addEventListener('click', () => {
-      if (window.appLogs.length === 0) return alert("No logs captured yet!");
-      const blob = new Blob([window.appLogs.join('\n')], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `proxy-logs-${new Date().getTime()}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    });
-
-    // --- 2. State Management & SW Bridge (Global Scope) ---
-    // Load saved settings from one unified source of truth
-    const loadSettings = () => {
-      return JSON.parse(localStorage.getItem("proxySettings")) || {
-        debugLogs: true,
-        backendUrl: window.location.origin,
-      };
-    };
-
-    // The Bridge function
-    const syncWithServiceWorker = (settings) => {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.ready.then((registration) => {
-          // Grab the active controller OR the registration
-          const sw = navigator.serviceWorker.controller || registration.active;
-          if (sw) {
-            sw.postMessage({
-              type: 'UPDATE_SETTINGS',
-              payload: settings
-            });
-            console.log("📡 Reminded SW of settings:", settings);
-          } else {
-            console.log("⚠️ ERROR: No active SW found to send settings to!");
-          }
+        // --- History Navigation ---
+        backBtn.addEventListener('click', () => {
+            try {
+                frame.contentWindow.history.back();
+            } catch (e) {
+                console.warn('[Host] Could not navigate back:', e);
+            }
         });
-      }
-    };
 
-    // --- 3. UI & Initialization ---
-    document.addEventListener("DOMContentLoaded", () => {
-      const panel = document.getElementById("settings-panel");
-      const toggleBtn = document.getElementById("settings-toggle");
-      const saveBtn = document.getElementById("settings-save");
-      const resetBtn = document.getElementById("settings-reset"); 
-      
-      const logToggle = document.getElementById("setting-debug-logs");
-      const backendInput = document.getElementById("setting-backend-url");
-      // Initialize UI with saved settings
-      let currentSettings = loadSettings();
-      logToggle.checked = currentSettings.debugLogs;
-      backendInput.value = currentSettings.backendUrl;
+        fwdBtn.addEventListener('click', () => {
+            try {
+                frame.contentWindow.history.forward();
+            } catch (e) {
+                console.warn('[Host] Could not navigate forward:', e);
+            }
+        });
 
-      // WAKE UP CALL #1: Beam settings to SW the moment the page loads
-      navigator.serviceWorker.ready.then(() => syncWithServiceWorker(currentSettings));
+        // --- 1. Register the V2 Service Worker & Listen for Logs ---
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+                .then(registration => { 
+                    statusEl.textContent = 'SW: Active'; 
+                    statusEl.style.color = 'var(--success)'; 
+                })
+                .catch(err => { 
+                    statusEl.textContent = 'SW: Failed'; 
+                    console.error('SW Failed:', err);
+                });
 
-      // UI Event Listeners
-      toggleBtn.addEventListener("click", () => {
-        panel.style.display = panel.style.display === "none" ? "block" : "none";
-      });
-      
-      saveBtn.addEventListener("click", () => {
-        const newSettings = {
-          debugLogs: logToggle.checked,
-          backendUrl: backendInput.value.trim(),
-        };
-        localStorage.setItem("proxySettings", JSON.stringify(newSettings));
-        syncWithServiceWorker(newSettings);
-        panel.style.display = "none";
-        alert("Settings saved!");
-        proxyLog('System', "Settings saved & sent to SW.");
-      });
-
-      const DEFAULT_SETTINGS = {
-        debugLogs: true,
-        backendUrl: window.location.origin,
-      };
-
-      resetBtn.addEventListener("click", () => {
-        localStorage.setItem("proxySettings", JSON.stringify(DEFAULT_SETTINGS));
-        logToggle.checked = DEFAULT_SETTINGS.debugLogs;
-        backendInput.value = DEFAULT_SETTINGS.backendUrl;
-        syncWithServiceWorker(DEFAULT_SETTINGS);
-        alert("Settings have been reset to default values.");
-      });
-    });
-
-    // --- 4. Service Worker Registration ---
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js?v=GLOBAL_NET_1', { scope: '/' })
-        .then(() => proxyLog('System', 'Service Worker registered with scoped access.'))
-        .catch(err => proxyLog('System Error', `SW Registration failed: ${err}`));
-
-      navigator.serviceWorker.addEventListener('message', event => {
-        if (event.data && event.data.type === 'sw-log') {
-          proxyLog('SW/Backend', event.data.message);
+            // Catch messages from the Service Worker and log them
+            navigator.serviceWorker.addEventListener('message', event => {
+                if (event.data && event.data.type === 'sw-log') {
+                    console.log(`%c[SW Broadcast]`, 'color: #a6e3a1; font-weight: bold;', event.data.message);
+                }
+            });
         }
-      });
-    }
 
-    // --- 5. Routing & Smart Omnibox Engine ---
-    function loadUrl() {
-      let input = document.getElementById('url-input').value.trim();
-      if (!input) return;
+        // --- 2. Routing Logic & Omnibox Sync ---
+        function loadUrl() {
+            let targetUrl = input.value.trim();
+            if (!targetUrl) return;
+            
+            // Smart Omnibox (Search vs URL)
+            if (targetUrl.includes(' ') || !targetUrl.includes('.')) {
+                targetUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(targetUrl);
+                console.log(`[Host] 🔍 Search detected. Routing to DuckDuckGo...`);
+            } else if (!/^https?:\/\//i.test(targetUrl)) {
+                targetUrl = 'https://' + targetUrl;
+            }
 
-      let finalUrl = input;
+            console.log(`[Host] 🚀 Loading into iframe: ${targetUrl}`);
+            
+            // Show the loading spinner
+            loader.style.display = 'block';
 
-      // Smart Omnibox Logic:
-      // If the input has spaces, or DOESN'T have a dot (like "cats" or "hello world"), 
-      // treat it as a search query.
-      if (input.includes(' ') || !input.includes('.')) {
-        finalUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(input);
-        proxyLog('Client', `🔍 Search detected. Routing query to DuckDuckGo...`);
-      } 
-      // If it looks like a URL but is missing http://, add it for them
-      else if (!input.startsWith('http://') && !input.startsWith('https://')) {
-        finalUrl = 'https://' + input;
-      }
+            // Launch the V2 tunnel inside the iframe
+            frame.src = '/service/' + encodeURIComponent(targetUrl);
+            input.blur(); // Remove focus from the input box after pressing enter
+        }
 
-      const frame = document.getElementById('frame');
-      proxyLog('Client', `🚀 Routing to: ${finalUrl}`);
-      frame.removeAttribute('srcdoc');
-      
-      // Route through our proxy
-      frame.src = '/service/' + encodeURIComponent(finalUrl); 
-    }
+        goBtn.addEventListener('click', loadUrl);
+        input.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') loadUrl();
+        });
 
-    document.getElementById('url-input').addEventListener('keypress', function (e) {
-      if (e.key === 'Enter') loadUrl();
-    });
+        // --- Omnibox URL Sync ---
+        function syncUrlBar() {
+            try {
+                // We can read this because the iframe is on our same origin!
+                const currentHref = frame.contentWindow.location.href;
+                
+                if (!currentHref || currentHref === 'about:blank') return;
 
-    // --- 6. Eruda DevTools Injector ---
-    (function () {
-      if (!/eruda=true/.test(window.location.search) && localStorage.getItem('active-eruda') !== 'true') return;
-      var script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/eruda';
-      script.crossOrigin = 'anonymous';
-      script.onload = function () { 
-        eruda.init(); 
-        proxyLog('System', 'Eruda DevTools injected successfully.');
-      };
-      document.head.appendChild(script);
-    })();
-  </script>
+                const marker = '/service/';
+                const markerIndex = currentHref.indexOf(marker);
+                
+                if (markerIndex !== -1) {
+                    // Extract and decode the real target URL
+                    const rawTarget = currentHref.substring(markerIndex + marker.length);
+                    const decodedTarget = decodeURIComponent(rawTarget);
+                    
+                    // Only update the input if the user ISN'T actively typing in it
+                    if (document.activeElement !== input && input.value !== decodedTarget) {
+                        input.value = decodedTarget;
+                    }
+                }
+            } catch (e) {
+                // Silently ignore cross-origin errors (shouldn't happen with SW, but safe to catch)
+            }
+        }
+
+        // Sync when the iframe fully loads a new page, and hide the loader
+        frame.addEventListener('load', () => {
+            loader.style.display = 'none';
+            syncUrlBar();
+        });
+        
+        
+        // Sync every 500ms to catch hidden Single Page Application (SPA) navigations
+        setInterval(syncUrlBar, 500);
+
+        // --- 3. Eruda DevTools Auto-Injector ---
+        (function () {
+            var script = document.createElement('script');
+            // FIX: Point directly to the file to prevent SW 302 redirect failures
+            script.src = 'https://cdn.jsdelivr.net/npm/eruda/eruda.min.js';
+            script.onload = function () { 
+                eruda.init({
+                    defaults: { theme: 'Dark' }
+                }); 
+                console.log('[Host] Eruda DevTools injected & ready.');
+            };
+            document.head.appendChild(script);
+        })();
+
+        const clearBtn = document.getElementById('clear-btn');
+
+        // --- 4. Cache & Storage Cleanup ---
+        clearBtn.addEventListener('click', async () => {
+            const originalStatus = statusEl.textContent;
+            const originalColor = statusEl.style.color;
+            
+            try {
+                // 1. Delete the static asset cache
+                const cacheDeleted = await caches.delete('v2-engine-cache');
+                
+                // 2. Delete the persistent cookies database
+                const idbRequest = indexedDB.deleteDatabase('ProxyStorage');
+                
+                idbRequest.onsuccess = () => {
+                    console.log('[Host] 🧹 V2 Engine Cache & Storage cleared successfully.');
+                    
+                    // Flash the status indicator
+                    statusEl.textContent = 'Cleared!';
+                    statusEl.style.color = 'var(--success)';
+                    
+                    setTimeout(() => {
+                        statusEl.textContent = originalStatus;
+                        statusEl.style.color = originalColor;
+                    }, 2000);
+                };
+                
+                idbRequest.onerror = () => {
+                    console.error('[Host] ⚠️ Failed to delete Cookie DB.');
+                };
+                
+                // Optional: Force a reload of the iframe to clear memory
+                frame.src = 'about:blank';
+                
+            } catch (err) {
+                console.error('[Host] Error clearing cache:', err);
+                statusEl.textContent = 'Clear Error';
+                statusEl.style.color = 'var(--danger)';
+            }
+        });
+        // --- 5. Settings Modal Logic ---
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsModal = document.getElementById('settings-modal');
+        const closeSettings = document.getElementById('close-settings');
+
+        // Open Modal
+        settingsBtn.addEventListener('click', () => {
+            settingsModal.classList.add('active');
+        });
+
+        // Close Modal via Button
+        closeSettings.addEventListener('click', () => {
+            settingsModal.classList.remove('active');
+        });
+
+        // Close Modal by clicking outside the box
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) {
+                settingsModal.classList.remove('active');
+            }
+        });
+        // --- 6. Stealth Cloak (about:blank) Logic ---
+        const stealthBtn = document.getElementById('btn-stealth');
+
+        stealthBtn.addEventListener('click', () => {
+            if (stealthBtn.disabled) return;
+
+            // Agnostic URL: dynamically grab wherever the engine is currently hosted
+            const PROXY_URL = window.location.href; 
+            
+            // 1. Open the blank window
+            let win = window.open('about:blank', '_blank');
+            
+            // 2. Alert if popups are blocked
+            if (!win || win.closed || typeof win.closed === 'undefined') {
+                alert("Popup blocker prevented the launch! Please allow popups for this site.");
+                return;
+            }
+
+            // 3. Inject the disguised iframe into the blank document
+            let doc = win.document;
+            doc.open();
+            doc.write(`
+                <!DOCTYPE html>
+                <html>
+                    <head>
+                        <title>Google Drive</title> 
+                        <link rel="icon" href="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png"> 
+                        <style>
+                            body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #121212; }
+                            iframe { border: none; width: 100%; height: 100%; }
+                        </style>
+                    </head>
+                    <body>
+                        <iframe src="${PROXY_URL}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"></iframe>
+                    </body>
+                </html>
+            `);
+            doc.close();
+
+            // 4. Redirect the original, exposed tab
+            window.location.replace("https://google.com");
+        });
+
+        // --- 7. Settings: Ad-Blocker Toggle ---
+        const adblockToggle = document.getElementById('toggle-adblock');
+
+        // 1. Initialize Database and Load Saved State
+        const dbReq = indexedDB.open('ProxyStorage', 2);
+        dbReq.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies');
+            if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+        };
+        dbReq.onsuccess = (e) => {
+            const db = e.target.result;
+            const tx = db.transaction('settings', 'readonly');
+            const req = tx.objectStore('settings').get('adblock');
+            req.onsuccess = () => {
+                if (req.result !== undefined) {
+                    adblockToggle.checked = req.result;
+                }
+            };
+        };
+
+        // 2. Handle User Toggling
+        adblockToggle.addEventListener('change', (e) => {
+            const isEnabled = e.target.checked;
+            
+            // Write to IndexedDB permanently
+            const dbReq2 = indexedDB.open('ProxyStorage', 2);
+            dbReq2.onsuccess = (ev) => {
+                const db = ev.target.result;
+                const tx = db.transaction('settings', 'readwrite');
+                tx.objectStore('settings').put(isEnabled, 'adblock');
+            };
+
+            // Send instant message to update SW memory
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'update-setting',
+                    key: 'adblock',
+                    value: isEnabled
+                });
+            }
+        });
+    </script>
 </body>
 </html>

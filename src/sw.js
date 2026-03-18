@@ -1,373 +1,405 @@
-// Default settings inside the SW
-let config = {
-  debugLogs: true,
-  backendUrl: self.location.origin,
-};
+const SW_VERSION = 'v2.0.11'; // Bumped version to force cache update
 
-// Force SW to take control immediately
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
-
-// Listen for settings updates from the UI
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'UPDATE_SETTINGS') {
-    config = { ...config, ...event.data.payload };
-    console.log("[SW] ⚙️ Internal config updated:", config);
-  }
-});
-
-
+// --- Remote Logger ---
+function remoteLog(msg) {
+    console.log(msg);
+    self.clients.matchAll({ includeUncontrolled: true }).then(clients => {
+        clients.forEach(client => client.postMessage({ type: 'sw-log', message: msg }));
+    });
+}
 
 // --------------------------------------------------------
-// Persistent Cookie Storage (IndexedDB)
+// Persistent Storage (IndexedDB) - v2
 // --------------------------------------------------------
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('ProxyStorage', 1);
-  request.onupgradeneeded = (e) => {
-    e.target.result.createObjectStore('cookies');
-  };
-  request.onsuccess = (e) => resolve(e.target.result);
-  request.onerror = () => reject('IDB Error');
+    const request = indexedDB.open('ProxyStorage', 2); // Bumped to v2
+    request.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies');
+        if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+    };
+    request.onsuccess = (e) => resolve(e.target.result);
+    request.onerror = () => reject('IDB Error');
 });
 
+// --- Settings Memory Cache ---
+let adBlockCache = null; // Memory variable so we don't spam the database
 
+async function isAdBlockEnabled() {
+    if (adBlockCache !== null) return adBlockCache; // Return instantly if already loaded
+    
+    try {
+        const db = await dbPromise;
+        return new Promise((resolve) => {
+            const tx = db.transaction('settings', 'readonly');
+            const req = tx.objectStore('settings').get('adblock');
+            req.onsuccess = () => {
+                adBlockCache = req.result !== undefined ? req.result : true; // Default to true
+                resolve(adBlockCache);
+            };
+            req.onerror = () => resolve(true);
+        });
+    } catch (e) { return true; }
+}
 
-// --- SECURITY FIX 1: HTML Sanitizer Helper ---
-const escapeHTML = (str) => {
-  return String(str).replace(/[&<>'"]/g, 
-    tag => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        "'": '&#39;',
-        '"': '&quot;'
-      }[tag] || tag)
-  );
-};
+// Listen for live UI updates
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'update-setting') {
+        if (event.data.key === 'adblock') {
+            adBlockCache = event.data.value; // Instantly update memory
+            remoteLog(`[SW] ⚙️ AdBlock set to: ${adBlockCache}`);
+        }
+    }
+});
 
 async function saveCookies(domain, newCookies) {
-  try {
-    const db = await dbPromise;
-    const tx = db.transaction('cookies', 'readwrite');
-    const store = tx.objectStore('cookies');
-    
-    const existingReq = store.get(domain);
-    existingReq.onsuccess = () => {
-      let current = existingReq.result || [];
-      const merged = [...current, ...newCookies.map(c => c.split(';')[0])];
-      store.put([...new Set(merged)], domain);
-    };
-  } catch (e) { remoteLog(`[SW] IDB Save Error: ${e}`); }
+    try {
+        const db = await dbPromise;
+        const tx = db.transaction('cookies', 'readwrite');
+        const store = tx.objectStore('cookies');
+        
+        const existingReq = store.get(domain);
+        existingReq.onsuccess = () => {
+            let current = existingReq.result || [];
+            const merged = [...current, ...newCookies.map(c => c.split(';')[0])];
+            store.put([...new Set(merged)], domain);
+        };
+    } catch (e) { remoteLog(`[SW] IDB Save Error: ${e}`); }
 }
 
 async function getCookies(domain) {
-  try {
-    const db = await dbPromise;
-    return new Promise((resolve) => {
-      const tx = db.transaction('cookies', 'readonly');
-      const req = tx.objectStore('cookies').get(domain);
-      req.onsuccess = () => resolve(req.result || []);
-    });
-  } catch (e) { return []; }
-}
-
-self.addEventListener('install', event => {
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', event => {
-  event.waitUntil(clients.claim());
-});
-
-function remoteLog(msg) {
-  if (!config.debugLogs) return; // Mute logs if disabled!
-  
-  console.log(msg); 
-  self.clients.matchAll({ includeUncontrolled: true }).then(clients => {
-    clients.forEach(client => client.postMessage({ type: 'sw-log', message: msg }));
-  });
-}
-
-self.addEventListener('fetch', event => {
-  const url = new URL(event.request.url);
-  const referer = event.request.referrer;
-  const isFromProxy = referer && referer.includes('/service/');
-
-  // --- 1. THE ULTIMATE LEAK RECOVERY (Fixes DDG & Baby Globe) ---
-  // If a request hits our domain natively BUT came from a proxied page, it escaped.
-  if (!url.pathname.startsWith('/service/') && isFromProxy) {
-    // Only exclude the absolute core system files from recovery
-    if (url.pathname !== '/sw.js' && !url.pathname.startsWith('/ws/') && !url.pathname.startsWith('/proxy-ws/')) {
-      try {
-        const parts = referer.split('/service/');
-        const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
-        
-        // Rebuild the URL to point to the actual target (e.g., duckduckgo.com/?q=cats)
-        const intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
-        const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
-
-        remoteLog(`[SW] 🛟 Rescued leaked request: ${url.pathname} -> ${safeProxyUrl}`);
-        
-        // Instantly redirect the browser back into the proxy tunnel
-        return event.respondWith(Response.redirect(safeProxyUrl, 301));
-      } catch (e) {
-        remoteLog(`[SW] Recovery parsing failed: ${e.message}`);
-      }
-    }
-  }
-
-  // --- 2. SYSTEM BYPASS ---
-  // Let the main UI and WebSockets load normally (Now protected by the logic above)
-  if ((url.pathname === '/' && url.search === '') || url.pathname === '/index.html' || url.pathname === '/sw.js' || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy-ws/')) {
-    return; 
-  }
-
-  // --- 3. STANDARD PROXY PASS ---
-  event.respondWith(handleProxyRequest(event, event.request, url));
-});
-
-async function handleProxyRequest(event, request, url) {
-  let targetUrl = url.pathname + url.search;
-
-  // 1. Resolve the Target URL
-  if (targetUrl.startsWith('/service/')) {
-    // Direct proxy requests from the address bar
-    targetUrl = decodeURIComponent(targetUrl.substring(9)).replace(/&amp;/g, '&');
-  } else {
-    // Relative assets (images, scripts) that leaked out
-    targetUrl = targetUrl.replace(/&amp;/g, '&');
-    
-    if (!/^https?:\/\//i.test(targetUrl)) {
-      const referer = request.referrer;
-      let resolved = false;
-
-      if (referer && referer.includes('/service/')) {
-        try {
-          // Extract origin from the proxied referrer and glue the path to it
-          const parts = referer.split('/service/');
-          const proxiedOrigin = new URL(decodeURIComponent(parts[1])).origin;
-          targetUrl = new URL(url.pathname + url.search, proxiedOrigin).toString();
-          resolved = true;
-        } catch (e) {
-          remoteLog(`[SW] Asset Resolver Error: ${e.message}`);
-        }
-      }
-
-      if (!resolved) {
-        targetUrl = 'https://' + targetUrl.replace(/^\/+/, '');
-      }
-    }
-  }
-
-  remoteLog(`[SW] Intercepted Fetch for: ${targetUrl}`);
-
-  // 2. --- STRICT LOOPBACK PREVENTION (Relaxed) ---
-  try {
-    const parsedTarget = new URL(targetUrl);
-    // If it hits our own domain AND doesn't have the /service/ prefix
-    if (parsedTarget.hostname === self.location.hostname && !parsedTarget.pathname.startsWith('/service/')) {
-      const bypassList = ['/', '/index.html', '/sw.js', '/style.css']; 
-      if (!bypassList.includes(parsedTarget.pathname)) {
-        remoteLog(`[SW] 🛑 Blocked phantom loopback to: ${targetUrl}`);
-        return new Response(null, { status: 204 }); 
-      }
-    }
-  } catch(e) {
-    // Malformed URL, allow it to fall through to a natural error
-  }
-
-  // --- SECURITY FIX 3: Hostname-specific Ad Blocking ---
-  const blockList = [
-    'doubleclick.net',
-    'google-analytics.com',
-    'googlesyndication.com',
-    'amazon-adsystem.com',
-    'trackersimulator.org'
-  ];
-
-  try {
-    const targetHost = new URL(targetUrl).hostname;
-    if (blockList.some(domain => targetHost.includes(domain))) {
-      remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
-      return new Response(null, { status: 204 }); 
-    }
-  } catch(e) {
-    // If it fails to parse, it might be a malformed URL, we can let it proceed to error out natively
-  }
-
-  return new Promise((resolve) => {
     try {
-      // 2. Open WebSocket to the Worker
-      const wsUrl = new URL('/ws/', config.backendUrl);
-      wsUrl.protocol = wsUrl.protocol === 'http:' ? 'ws:' : 'wss:';
-      
-      remoteLog(`[SW] Opening WebSocket to Backend at ${wsUrl.origin}...`);
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = "arraybuffer";
-      
-      let responseStatus = 200;
-      let responseHeaders = new Headers();
-      let streamController;
-      let headersResolved = false;
+        const db = await dbPromise;
+        return new Promise((resolve) => {
+            const tx = db.transaction('cookies', 'readonly');
+            const req = tx.objectStore('cookies').get(domain);
+            req.onsuccess = () => resolve(req.result || []);
+        });
+    } catch (e) { return []; }
+}
 
-      const stream = new ReadableStream({
-        start(controller) { streamController = controller; },
-        cancel(reason) {
-          remoteLog(`[SW] Browser canceled stream. Terminating WS.`);
-          try { ws.close(); } catch(e) {}
+// --- Aggressive Takeover ---
+self.addEventListener('install', event => self.skipWaiting());
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+
+// --- Main Router ---
+self.addEventListener('fetch', event => {
+    // --- SAFE EXTRACTION HELPER (DEEP PEEL) ---
+    function extractTarget(urlString) {
+        if (!urlString) return null;
+            const marker = '/service/';
+            const idx = urlString.indexOf(marker);
+            if (idx === -1) return null;
+            
+            // 1. Decode the first layer
+            let extracted = decodeURIComponent(urlString.substring(idx + marker.length));
+            
+            // 2. Deep Un-glue: Catch double-proxied URLs
+            // If the browser accidentally double-wrapped the URL, we peel it.
+            const doubleGlueMarker = '/service/http';
+            let glueIdx = extracted.indexOf(doubleGlueMarker);
+            
+            while (glueIdx !== -1) {
+                let peeled = extracted.substring(glueIdx + marker.length);
+                // Catch instances where the inner layer was also URL-encoded
+                if (peeled.startsWith('s%3A') || peeled.startsWith('%3A')) {
+                    try { peeled = decodeURIComponent(peeled); } catch(e) {}
+                }
+                extracted = peeled;
+                glueIdx = extracted.indexOf(doubleGlueMarker);
+            }
+            
+            return extracted;
         }
-      });
 
-      const sendErrorToScreen = (errorMsg) => {
-        remoteLog(`[SW] Sending error screen: ${errorMsg}`);
-        if (!headersResolved) {
-          headersResolved = true;
-          // --- SECURITY FIX 1 (Applied): Escaping dynamic variables ---
-          const errorHtml = `
-            <div style="font-family: monospace; padding: 20px; color: #d8000c; background: #ffbaba; border: 1px solid #d8000c; border-radius: 5px;">
-              <h2>Proxy Error</h2>
-              <p><strong>Target:</strong> ${escapeHTML(targetUrl)}</p>
-              <p><strong>Details:</strong> ${escapeHTML(errorMsg)}</p>
-            </div>
-          `;
-          resolve(new Response(errorHtml, {
-            status: 502,
-            headers: { 'Content-Type': 'text/html' }
-          }));
-        }
-      };
-
-      ws.onopen = async () => {
-        remoteLog(`[SW] WebSocket Open. Sending metadata.`);
-        const headers = {};
-        request.headers.forEach((value, key) => headers[key] = value);
+        // --- GLOBAL MANGLED URL RESCUE ---
+        let requestUrlStr = event.request.url;
+        const marker = '/service/';
         
-        let requestDomain = "";
+        // Catch cross-origin glued URLs and peel them safely
+        if (requestUrlStr.includes(marker) && !requestUrlStr.startsWith(self.location.origin + marker)) {
+            const extracted = extractTarget(requestUrlStr);
+            if (extracted && extracted.startsWith('http')) {
+                requestUrlStr = extracted; 
+                remoteLog(`[SW] 🩹 Global Un-glue: Rescued -> ${requestUrlStr}`);
+            }
+        }
+
+        const url = new URL(requestUrlStr);
+
+    // 1. SYSTEM BYPASS (Let native UI, WS, and our CDNs pass directly)
+    if (
+        url.hostname === 'cdn.jsdelivr.net' || // Allow Eruda to bypass the proxy entirely
+        (url.origin === self.location.origin && (
+            url.pathname === '/' ||
+            url.pathname === '/index.html' ||
+            url.pathname === '/sw.js' ||
+            url.pathname.startsWith('/ws/') ||
+            url.pathname.startsWith('/proxy-ws/')
+        ))
+    ) {
+        return; // Fallback to normal browser fetch
+    }
+
+    event.respondWith((async () => {
+
+        // --- DEEP REFERER RESOLUTION ---
+        let targetBaseStr = extractTarget(event.request.referrer);
+        
+        if (!targetBaseStr && event.clientId) {
+            const client = await self.clients.get(event.clientId);
+            if (client) targetBaseStr = extractTarget(client.url);
+        }
+
+        // --- STRICT ROUTING LOGIC ---
+
+        // Case A: External Leak (Different Domain)
+        if (url.origin !== self.location.origin) {
+            let intendedTarget = url.href;
+
+            const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+            remoteLog(`[SW] 🩹 External Rescue: ${url.href} -> ${safeProxyUrl}`);
+
+            if (event.request.mode === 'navigate') {
+                return Response.redirect(safeProxyUrl, 301);
+            } else {
+                const proxyReq = new Request(safeProxyUrl, event.request);
+                return await handleProxyRequest(proxyReq, intendedTarget);
+            }
+        }
+
+        // Case B: Internal Request (Our Domain)
+        if (url.pathname.startsWith('/service/')) {
+            // Use the raw url.href instead of url.pathname to prevent // collapsing!
+            let extractedTarget = extractTarget(url.href) || '';
+            
+            // Cleanup missing protocols
+            if (!extractedTarget.startsWith('http')) {
+                if (extractedTarget.startsWith('//')) {
+                    extractedTarget = 'https:' + extractedTarget;
+                } else if (targetBaseStr) {
+                    try {
+                        extractedTarget = new URL(extractedTarget, targetBaseStr).toString();
+                    } catch(e) {
+                        extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
+                    }
+                } else {
+                    extractedTarget = 'https://' + extractedTarget.replace(/^\/+/, '');
+                }
+            }
+            
+            // 4. STANDARD PROXY PASS
+            return await handleProxyRequest(event.request, extractedTarget);
+            
+        } else {
+            // Case C: Internal Leak (Our domain, missing /service/)
+            let intendedTarget = null;
+            if (targetBaseStr) {
+                try {
+                    // targetBaseStr is now safely guaranteed to have both slashes
+                    const proxiedOrigin = new URL(targetBaseStr).origin;
+                    intendedTarget = new URL(url.pathname + url.search, proxiedOrigin).toString();
+                } catch (e) {
+                    remoteLog(`[SW] Leak resolution failed: ${e}`);
+                }
+            }
+
+            if (intendedTarget) {
+                const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
+                remoteLog(`[SW] 🩹 Internal Rescue: ${url.pathname} -> ${intendedTarget}`);
+
+                if (event.request.mode === 'navigate') {
+                    return Response.redirect(safeProxyUrl, 301);
+                } else {
+                    const proxyReq = new Request(safeProxyUrl, event.request);
+                    return await handleProxyRequest(proxyReq, intendedTarget);
+                }
+            }
+            
+            return new Response("Not Found - Proxy Leak", { status: 404 });
+        }
+    })());
+});
+
+// --- The WebSocket Courier ---
+async function handleProxyRequest(request, targetUrlStr) {
+    // 1. Final validation check
+    try {
+        new URL(targetUrlStr);
+    } catch (e) {
+        remoteLog(`[SW] ❌ FATAL URL ERROR: Cannot parse [${targetUrlStr}]`);
+        return new Response("Invalid URL format", { status: 400 });
+    }
+
+    // --- 🛡️ AD/TRACKER BLOCKER ---
+    const blockAds = await isAdBlockEnabled();
+    if (blockAds) {
+        const blockList = [
+            'doubleclick.net', 'google-analytics.com', 'googlesyndication.com',
+            'amazon-adsystem.com', 'trackersimulator.org'
+        ];
         try {
-          requestDomain = new URL(targetUrl).hostname;
+            const targetHost = new URL(targetUrlStr).hostname;
+            if (blockList.some(domain => targetHost.includes(domain))) {
+                remoteLog(`[SW] 🛑 Blocked Ad/Tracker: ${targetHost}`);
+                return new Response(null, { status: 204 }); 
+            }
         } catch(e) {}
+    }
+
+    // --- 🗄️ STATIC ASSET BROWSER CACHE ---
+    // Identify static files that are safe to cache
+    const isStaticAsset = /\.(css|js|png|jpg|jpeg|gif|webp|svg|woff|woff2|ttf|ico)(\?.*)?$/i.test(targetUrlStr);
+    let assetCache = null;
+
+    if (isStaticAsset && request.method === 'GET') {
+        try {
+            assetCache = await caches.open('v2-engine-cache');
+            const cachedResponse = await assetCache.match(targetUrlStr);
+            if (cachedResponse) {
+                remoteLog(`[SW] ⚡ Cache Hit: ${targetUrlStr}`);
+                return cachedResponse; // Return instantly from local storage!
+            }
+        } catch (e) {
+            remoteLog(`[SW] Cache read error: ${e}`);
+        }
+    }
+        
+    remoteLog(`[SW] 🚀 Proxying: ${targetUrlStr}`);
+
+    try {
+        // --- 📦 PAYLOAD CHUNKER ---
+        let bodyBase64 = null;
+        if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
+            const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024;
+            const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
+            
+            if (contentLength > MAX_PAYLOAD_SIZE) return new Response("Payload too large.", { status: 413 });
+
+            const buffer = await request.clone().arrayBuffer();
+            if (buffer.byteLength > MAX_PAYLOAD_SIZE) return new Response("Payload too large.", { status: 413 });
+
+            if (buffer.byteLength > 0) {
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                const chunksize = 0xFFFF;
+                for (let i = 0; i < bytes.length; i += chunksize) {
+                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunksize));
+                }
+                bodyBase64 = btoa(binary);
+            }
+        }
+
+        // --- 📨 EXTRACT HEADERS & INJECT COOKIES ---
+        const headers = {};
+        request.headers.forEach((val, key) => { headers[key] = val; });
+
+        let requestDomain = "";
+        try { requestDomain = new URL(targetUrlStr).hostname; } catch(e) {}
 
         const savedCookies = await getCookies(requestDomain);
         if (savedCookies && savedCookies.length > 0) {
             headers['Cookie'] = savedCookies.join('; ');
-            remoteLog(`[SW] Attached persistent cookies for ${requestDomain}`);
         }
 
-        let encodedBody = null;
-        if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
-          try {
-            // --- SECURITY FIX 2: Prevent memory crashes with a 5MB payload limit ---
-            const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
-            const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024; // 5MB limit
-            
-            if (contentLength > MAX_PAYLOAD_SIZE) {
-               throw new Error("Payload too large. Maximum size is 5MB.");
-            }
-
-            const buffer = await request.clone().arrayBuffer();
-            
-            if (buffer.byteLength > MAX_PAYLOAD_SIZE) {
-               throw new Error("Payload too large. Maximum size is 5MB.");
-            }
-
-            if (buffer.byteLength > 0) {
-              const bytes = new Uint8Array(buffer);
-              // Use a more performant way to convert chunks if payload is large
-              let binary = "";
-              const chunksize = 0xFFFF;
-              for (let i = 0; i < bytes.length; i += chunksize) {
-                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunksize));
-              }
-              encodedBody = btoa(binary);
-            }
-          } catch (e) {
-            remoteLog(`[SW] Failed to read request body: ${e.message}`);
-          }
-        }
+        // Establish WS connection to Cloudflare Worker
+        const wsUrl = new URL('/ws/', self.location.origin);
+        wsUrl.protocol = self.location.protocol === 'https:' ? 'wss:' : 'ws:';
         
-        ws.send(JSON.stringify({
-          type: 'request',
-          url: targetUrl,
-          method: request.method,
-          headers: headers,
-          body: encodedBody 
-        }));
-      };
+        return new Promise((resolve) => {
+            const ws = new WebSocket(wsUrl.toString());
+            ws.binaryType = 'arraybuffer';
 
-      ws.onmessage = (event) => {
-        if (typeof event.data === 'string') {
-          const msg = JSON.parse(event.data);
-          
-          if (msg.type === 'info') {
-            remoteLog(`[Server] ${msg.message}`);
-          } else if (msg.type === 'response') {
-            remoteLog(`[SW] Received Response Headers (Status: ${msg.status})`);
-            responseStatus = msg.status;
-            for (const [key, value] of Object.entries(msg.headers)) {
-              responseHeaders.set(key, value);
-            }
+            let streamController = null;
+            const stream = new ReadableStream({
+                start(controller) { streamController = controller; },
+                cancel() { ws.close(); }
+            });
 
-            // --- SECURITY FIX 4: Prevent Cross-Origin Cookie Forgery ---
-            if (msg.setCookies && msg.setCookies.length > 0 && msg.targetDomain) {
-              try {
-                const expectedDomain = new URL(targetUrl).hostname;
-                const cookieDomain = msg.targetDomain.replace(/^\./, '');
+            ws.onopen = () => {
+                ws.send(JSON.stringify({
+                    type: 'request',
+                    url: targetUrlStr,
+                    method: request.method,
+                    headers: headers,
+                    body: bodyBase64
+                }));
+            };
 
-                // VALIDATION: Must have at least one dot (not a TLD) 
-                // AND must be a suffix of the actual site we are visiting
-                const isSafeDomain = cookieDomain.includes('.') && expectedDomain.endsWith(cookieDomain);
-              
-                if (isSafeDomain) {
-                  saveCookies(msg.targetDomain, msg.setCookies);
-                  remoteLog(`[SW] Saved ${msg.setCookies.length} persistent cookies for ${msg.targetDomain}`);
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    const msg = JSON.parse(event.data);
+                    
+                    if (msg.type === 'response') {
+                        // --- 💾 EXTRACT AND SAVE COOKIES ---
+                        if (msg.setCookies && msg.setCookies.length > 0 && msg.targetDomain) {
+                            try {
+                                const expectedDomain = new URL(targetUrlStr).hostname;
+                                const cookieDomain = msg.targetDomain.replace(/^\./, '');
+                                if (cookieDomain.includes('.') && expectedDomain.endsWith(cookieDomain)) {
+                                    saveCookies(msg.targetDomain, msg.setCookies);
+                                }
+                            } catch(e) {}
+                        }
+
+                        // --- 🧹 HEADER SANITIZATION ---
+                        const cleanHeaders = new Headers(msg.headers);
+                        cleanHeaders.delete('content-encoding');
+                        cleanHeaders.delete('content-length');
+                        cleanHeaders.delete('transfer-encoding');
+                        cleanHeaders.delete('content-security-policy');
+                        cleanHeaders.delete('content-security-policy-report-only');
+                        cleanHeaders.delete('cross-origin-embedder-policy');
+                        cleanHeaders.delete('cross-origin-opener-policy');
+                        cleanHeaders.delete('x-frame-options');
+
+                        const locationHeader = cleanHeaders.get('location');
+                        if (msg.status >= 300 && msg.status < 400 && locationHeader) {
+                            ws.close();
+                            const absoluteRedirect = new URL(locationHeader, targetUrlStr).toString();
+                            const safeRedirectUrl = `${self.location.origin}/service/${encodeURIComponent(absoluteRedirect)}`;
+                            resolve(Response.redirect(safeRedirectUrl, msg.status));
+                        } else {
+                            const finalResponse = new Response(stream, {
+                                status: msg.status,
+                                headers: cleanHeaders
+                            });
+
+                            // --- 💾 SAVE TO CACHE ON SUCCESS ---
+                            if (isStaticAsset && msg.status === 200 && assetCache) {
+                                // Clone the response stream before returning it to the browser
+                                const cacheCopy = finalResponse.clone();
+                                assetCache.put(targetUrlStr, cacheCopy).catch(err => {
+                                    remoteLog(`[SW] Cache write error: ${err}`);
+                                });
+                            }
+
+                            resolve(finalResponse);
+                        }
+                    } else if (msg.type === 'end') {
+                        if (streamController) try { streamController.close(); } catch(e) {}
+                        ws.close();
+                    } else if (msg.type === 'error') {
+                        remoteLog(`[SW] ❌ Backend Error: ${msg.message}`);
+                        if (streamController) try { streamController.close(); } catch(e) {}
+                        ws.close();
+                    }
                 } else {
-                  remoteLog(`[SW] ⚠️ Blocked suspicious cookie domain: ${msg.targetDomain}`);
+                    if (streamController) {
+                        try { streamController.enqueue(new Uint8Array(event.data)); } catch (e) {}
+                    }
                 }
-              } catch(e) {}
-            }
+            };
 
-            headersResolved = true;
-            resolve(new Response(stream, {
-              status: responseStatus,
-              headers: responseHeaders
-            }));
-          } else if (msg.type === 'error') {
-            remoteLog(`[SW] Received Error: ${msg.message}`);
-            sendErrorToScreen(msg.message);
-          } else if (msg.type === 'end') {
-            remoteLog(`[SW] Stream End signal received.`);
-            try { streamController.close(); } catch(e) {}
-            ws.close();
-          }
-        } else {
-          try { 
-            streamController.enqueue(new Uint8Array(event.data)); 
-          } catch(e) {
-            remoteLog(`[SW] Enqueue failed: ${e.message}. Closing WS.`);
-            try { ws.close(); } catch(err) {}
-          }
-        }
-      };
-
-      ws.onerror = (err) => {
-        remoteLog(`[SW] WebSocket Error.`);
-        sendErrorToScreen("WebSocket connection failed.");
-      };
-
-      ws.onclose = (e) => {
-        if (!headersResolved) {
-          sendErrorToScreen(`WebSocket closed before headers arrived.`);
-        } else {
-          try { streamController.close(); } catch(e) {}
-        }
-      };
-
+            ws.onerror = () => {
+                if (!streamController) resolve(new Response("WebSocket Proxy Error", { status: 502 }));
+            };
+            
+            ws.onclose = () => {
+                if (streamController) try { streamController.close(); } catch(e) {}
+            };
+        });
     } catch (err) {
-      // --- SECURITY FIX 1 (Applied): Escaping dynamic variables ---
-      resolve(new Response(`<h2>Internal SW Error</h2><pre>${escapeHTML(err.message)}</pre>`, {
-        status: 500,
-        headers: { 'Content-Type': 'text/html' }
-      }));
+        return new Response(`Service Worker Error: ${err.message}`, { status: 500 });
     }
-  });
 }
