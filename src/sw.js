@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.10'; // Bumped version to force cache update
+const SW_VERSION = 'v2.0.11'; // Bumped version to force cache update
 
 // --- Remote Logger ---
 function remoteLog(msg) {
@@ -84,21 +84,48 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 
 // --- Main Router ---
 self.addEventListener('fetch', event => {
-    // --- GLOBAL MANGLED URL RESCUE ---
-    let requestUrlStr = event.request.url;
-    const marker = '/service/';
-        
-    // If the URL contains /service/ but IS NOT aimed correctly at our proxy domain...
-    if (requestUrlStr.includes(marker) && !requestUrlStr.startsWith(self.location.origin + marker)) {
-        const extracted = decodeURIComponent(requestUrlStr.substring(requestUrlStr.indexOf(marker) + marker.length));
-        // Ensure we actually extracted a valid URL
-        if (extracted.startsWith('http')) {
-            requestUrlStr = extracted; // Un-glue it!
-            remoteLog(`[SW] 🩹 Global Un-glue: Rescued -> ${requestUrlStr}`);
+    // --- SAFE EXTRACTION HELPER (DEEP PEEL) ---
+    function extractTarget(urlString) {
+        if (!urlString) return null;
+            const marker = '/service/';
+            const idx = urlString.indexOf(marker);
+            if (idx === -1) return null;
+            
+            // 1. Decode the first layer
+            let extracted = decodeURIComponent(urlString.substring(idx + marker.length));
+            
+            // 2. Deep Un-glue: Catch double-proxied URLs
+            // If the browser accidentally double-wrapped the URL, we peel it.
+            const doubleGlueMarker = '/service/http';
+            let glueIdx = extracted.indexOf(doubleGlueMarker);
+            
+            while (glueIdx !== -1) {
+                let peeled = extracted.substring(glueIdx + marker.length);
+                // Catch instances where the inner layer was also URL-encoded
+                if (peeled.startsWith('s%3A') || peeled.startsWith('%3A')) {
+                    try { peeled = decodeURIComponent(peeled); } catch(e) {}
+                }
+                extracted = peeled;
+                glueIdx = extracted.indexOf(doubleGlueMarker);
+            }
+            
+            return extracted;
         }
-    }
 
-    const url = new URL(requestUrlStr);
+        // --- GLOBAL MANGLED URL RESCUE ---
+        let requestUrlStr = event.request.url;
+        const marker = '/service/';
+        
+        // Catch cross-origin glued URLs and peel them safely
+        if (requestUrlStr.includes(marker) && !requestUrlStr.startsWith(self.location.origin + marker)) {
+            const extracted = extractTarget(requestUrlStr);
+            if (extracted && extracted.startsWith('http')) {
+                requestUrlStr = extracted; 
+                remoteLog(`[SW] 🩹 Global Un-glue: Rescued -> ${requestUrlStr}`);
+            }
+        }
+
+        const url = new URL(requestUrlStr);
 
     // 1. SYSTEM BYPASS (Let native UI, WS, and our CDNs pass directly)
     if (
@@ -115,16 +142,6 @@ self.addEventListener('fetch', event => {
     }
 
     event.respondWith((async () => {
-        // --- DEEP REFERER RESOLUTION ---
-        // --- SAFE EXTRACTION HELPER ---
-        // This prevents the browser from collapsing 'https://' into 'https:/'
-        function extractTarget(urlString) {
-            if (!urlString) return null;
-            const marker = '/service/';
-            const idx = urlString.indexOf(marker);
-            if (idx === -1) return null;
-            return decodeURIComponent(urlString.substring(idx + marker.length));
-        }
 
         // --- DEEP REFERER RESOLUTION ---
         let targetBaseStr = extractTarget(event.request.referrer);
@@ -201,8 +218,6 @@ self.addEventListener('fetch', event => {
             
             return new Response("Not Found - Proxy Leak", { status: 404 });
         }
-        // 4. STANDARD PROXY PASS
-        return await handleProxyRequest(event.request, extractedTarget);
     })());
 });
 
