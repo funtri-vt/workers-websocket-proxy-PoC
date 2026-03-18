@@ -1,4 +1,4 @@
-const SW_VERSION = 'v2.0.9'; // Bumped version to force cache update
+const SW_VERSION = 'v2.0.10'; // Bumped version to force cache update
 
 // --- Remote Logger ---
 function remoteLog(msg) {
@@ -84,7 +84,21 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 
 // --- Main Router ---
 self.addEventListener('fetch', event => {
-    const url = new URL(event.request.url);
+    // --- GLOBAL MANGLED URL RESCUE ---
+    let requestUrlStr = event.request.url;
+    const marker = '/service/';
+        
+    // If the URL contains /service/ but IS NOT aimed correctly at our proxy domain...
+    if (requestUrlStr.includes(marker) && !requestUrlStr.startsWith(self.location.origin + marker)) {
+        const extracted = decodeURIComponent(requestUrlStr.substring(requestUrlStr.indexOf(marker) + marker.length));
+        // Ensure we actually extracted a valid URL
+        if (extracted.startsWith('http')) {
+            requestUrlStr = extracted; // Un-glue it!
+            remoteLog(`[SW] 🩹 Global Un-glue: Rescued -> ${requestUrlStr}`);
+        }
+    }
+
+    const url = new URL(requestUrlStr);
 
     // 1. SYSTEM BYPASS (Let native UI, WS, and our CDNs pass directly)
     if (
@@ -125,16 +139,6 @@ self.addEventListener('fetch', event => {
         // Case A: External Leak (Different Domain)
         if (url.origin !== self.location.origin) {
             let intendedTarget = url.href;
-
-            // 🩹 MANGLED URL RESCUE (The Invidious Fix)
-            // If the browser accidentally glued our prefix to their domain:
-            const marker = '/service/';
-            if (intendedTarget.includes(marker)) {
-                const extracted = decodeURIComponent(intendedTarget.substring(intendedTarget.indexOf(marker) + marker.length));
-                if (extracted.startsWith('http')) {
-                    intendedTarget = extracted; // Rescued the real target!
-                }
-            }
 
             const safeProxyUrl = `${self.location.origin}/service/${encodeURIComponent(intendedTarget)}`;
             remoteLog(`[SW] 🩹 External Rescue: ${url.href} -> ${safeProxyUrl}`);
